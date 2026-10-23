@@ -1,0 +1,19 @@
+{
+  "name": "Example feed",
+  "mods": [
+    {
+      "id": "better-ui",
+      "name": "Better UI",
+      "summary": "A cleaner HUD.",
+      "description": "Longer description shown in the details dialog.",
+      "author": "you",
+      "thumbnail": "https://example.com/better-ui.png",
+      "url": "https://example.com/better-ui",
+      "games": ["steam:489830", "Skyrim Special Edition"],
+      "tags": ["ui"],
+      "versions": [
+        { "id": "1.2.0", "name": "Main file", "version": "1.2.0", "url": "https://example.com/files/better-ui-1.2.0.zip", "size": 1048576, "date": "2026-10-01" }
+      ]
+    }
+  ]
+}

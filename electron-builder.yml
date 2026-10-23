@@ -1,0 +1,30 @@
+appId: com.nexusforge.app
+productName: NexusForge
+copyright: Copyright © 2026 NexusForge
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - resources/icon.png
+  - package.json
+  - '!node_modules/7zip-bin/{mac,linux}/**'
+# 7za.exe has to live outside the asar archive to be executable.
+asarUnpack:
+  - node_modules/7zip-bin/**
+npmRebuild: false
+win:
+  icon: resources/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

@@ -24,6 +24,8 @@ interface Schema {
   activeProfiles: Record<string, string>
   downloads: DownloadItem[]
   window: WindowState
+  /** Signed-in account names per site (the keys themselves live encrypted in settings.sources). */
+  accounts: Record<string, { user?: string; avatar?: string; detail?: string }>
 }
 
 function defaultSettings(): StoredSettings {
@@ -34,8 +36,12 @@ function defaultSettings(): StoredSettings {
     autoFetchArtwork: true,
     scanPlatforms: { steam: true, epic: true, xbox: true, gog: true, custom: true },
     customFolders: [],
+    scanAllDrives: true,
     modStorageDir: join(app.getPath('userData'), 'mods'),
     defaultStrategy: 'symlink',
+    dependencyMode: 'ask',
+    steamcmdPath: '',
+    steamAccount: '',
     logLevel: 'info',
     sources: {},
     feeds: [],
@@ -58,7 +64,8 @@ export function db(): Store<Schema> {
         mods: {},
         activeProfiles: {},
         downloads: [],
-        window: { width: 1440, height: 900, maximized: false }
+        window: { width: 1440, height: 900, maximized: false },
+        accounts: {}
       }
     })
     // Merge in settings keys added in newer versions.

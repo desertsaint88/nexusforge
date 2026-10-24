@@ -1,4 +1,4 @@
-import type { ModDetails, ModSearchResult } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult } from '@shared/types'
 import type { AdapterContext, ModSourceAdapter } from './types'
 
 const API = 'https://api.modrinth.com/v2'
@@ -39,6 +39,8 @@ interface Version {
   loaders: string[]
   featured: boolean
   files: { url: string; filename: string; size: number; primary: boolean }[]
+  dependencies?: { project_id: string | null; version_id: string | null; dependency_type: 'required' | 'optional' | 'incompatible' | 'embedded' }[]
+  changelog?: string | null
 }
 
 export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
@@ -66,6 +68,24 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
 
     async getModDetails(modId): Promise<ModDetails> {
       const [p, versions] = await Promise.all([ctx.json<Project>(`${API}/project/${modId}`), ctx.json<Version[]>(`${API}/project/${modId}/version`)])
+      const depIds = [...new Set(versions.slice(0, 60).flatMap((v) => (v.dependencies ?? []).map((d) => d.project_id).filter(Boolean) as string[]))]
+      const names = new Map<string, string>()
+      if (depIds.length) {
+        const projects = await ctx.json<Array<{ id: string; title: string }>>(`${API}/projects?ids=${encodeURIComponent(JSON.stringify(depIds))}`).catch(() => [])
+        for (const x of projects) names.set(x.id, x.title)
+      }
+      const deps = (v: Version): ModDependency[] =>
+        (v.dependencies ?? [])
+          .filter((d) => d.project_id && (d.dependency_type === 'required' || d.dependency_type === 'optional'))
+          .map((d) => ({
+            sourceId: 'modrinth',
+            modId: d.project_id!,
+            versionId: d.version_id ?? undefined,
+            name: names.get(d.project_id!) ?? d.project_id!,
+            required: d.dependency_type === 'required',
+            installable: true,
+            url: `https://modrinth.com/project/${d.project_id}`
+          }))
       return {
         id: p.id,
         sourceId: 'modrinth',
@@ -83,15 +103,36 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
           const file = v.files.find((f) => f.primary) ?? v.files[0]
           return {
             id: v.id,
-            name: `${v.name} (${[...v.loaders, ...v.game_versions.slice(-2)].join(', ')})`,
+            name: v.name,
             version: v.version_number,
             fileName: file?.filename,
             sizeBytes: file?.size,
             date: v.date_published,
-            primary: i === 0
+            primary: i === 0,
+            gameVersions: v.game_versions,
+            loaders: v.loaders,
+            dependencies: deps(v),
+            description: v.changelog ? v.changelog.slice(0, 600) : undefined
           }
         })
       }
+    },
+
+    async resolveDependencies(_modId, versionId) {
+      if (!versionId) return []
+      const v = await ctx.json<Version>(`${API}/version/${versionId}`)
+      const ids = (v.dependencies ?? []).filter((d) => d.project_id && (d.dependency_type === 'required' || d.dependency_type === 'optional')).map((d) => d.project_id!)
+      const projects = ids.length ? await ctx.json<Array<{ id: string; title: string }>>(`${API}/projects?ids=${encodeURIComponent(JSON.stringify(ids))}`).catch(() => []) : []
+      return (v.dependencies ?? [])
+        .filter((d) => d.project_id && (d.dependency_type === 'required' || d.dependency_type === 'optional'))
+        .map((d) => ({
+          sourceId: 'modrinth',
+          modId: d.project_id!,
+          versionId: d.version_id ?? undefined,
+          name: projects.find((p) => p.id === d.project_id)?.title ?? d.project_id!,
+          required: d.dependency_type === 'required',
+          installable: true
+        }))
     },
 
     async getDownloadUrl(_modId, versionId) {

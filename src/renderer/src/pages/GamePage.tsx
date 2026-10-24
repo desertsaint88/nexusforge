@@ -176,6 +176,7 @@ function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game;
                 <HardDrive className="size-3" /> {formatBytes(game.sizeBytes)}
               </Badge>
             ) : null}
+            {game.version && <Badge className="bg-black/40 font-mono backdrop-blur-md">v{game.version}</Badge>}
             {game.missing && <Badge tone="danger">Install folder missing</Badge>}
           </div>
           <GameLogo game={game} />

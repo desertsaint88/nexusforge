@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { db, type WindowState } from './store'
 import { emit } from './events'
+import { setPanelHost } from './web/panel'
 
 export function rendererUrl(): string {
   return process.env.ELECTRON_RENDERER_URL ?? pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
@@ -46,6 +47,7 @@ export function createMainWindow(): BrowserWindow {
     }
   })
   if (state.maximized) win.maximize()
+  setPanelHost(win)
 
   const saveState = () => {
     if (win.isDestroyed() || win.isMinimized()) return

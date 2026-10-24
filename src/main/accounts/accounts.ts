@@ -1,0 +1,399 @@
+// Accounts: signing in to the mod sites from inside NexusForge. The site's own login page opens in the site panel
+// (in the same persistent session the download pages use, so a login there also counts for downloads). Once the
+// user is signed in, NexusForge reads their personal API key from the site's key page and checks it against the
+// site's API, so nobody has to copy keys around. Steam is different: SteamCMD signs in with name + password once.
+
+import type { AccountId, AccountInfo, SteamLoginRequest, SteamLoginResponse } from '@shared/types'
+import { db, getApiKey, getSettings, setSettings } from '../store'
+import { emit, toast } from '../events'
+import { scoped } from '../logger'
+import { HttpError, httpJson } from '../sources/http'
+import { NEXUS_PARTITION } from '../sources/nexus'
+import { clearSiteSession, siteView } from '../web/browser'
+import { addPanelEntry, removePanelEntry, setPanelHint } from '../web/panel'
+import { MARK } from '../web/helpers'
+import { steamLogin, steamLogout } from '../steam/steamcmd'
+
+const log = scoped('accounts')
+
+export interface AccountProfile {
+  user?: string
+  avatar?: string
+  detail?: string
+}
+
+interface WebAccount {
+  id: Exclude<AccountId, 'steam'>
+  name: string
+  unlocks: string
+  required: boolean
+  partition: string
+  /** Where sign-in starts; it should lead to the key page afterwards. */
+  signInUrl: string
+  registerUrl: string
+  keyPageUrl: string
+  isKeyPage(url: URL): boolean
+  /** Pages that belong to the sign-in itself (never navigated away from). */
+  isAuthPage(url: URL): boolean
+  /** Signed in and somewhere on the site, but not on the key page: go there. */
+  isSitePage(url: URL): boolean
+  /** Key patterns, as regex sources. */
+  keyPattern: string
+  /** Heading near the user's own key ("Personal API Key"), preferred over other keys on the page. */
+  section: string
+  /** Button that creates a key when there is none. */
+  createButton: string
+  /** Page text that means "not signed in". */
+  loggedOutText: string
+  validate(key: string): Promise<AccountProfile>
+  hints: { signIn: string; register: string; keyPage: string; noKey: string }
+}
+
+const WEB_ACCOUNTS: WebAccount[] = [
+  {
+    id: 'nexus',
+    name: 'Nexus Mods',
+    unlocks: 'Download buttons inside NexusForge for Nexus Mods files (a free account is enough; Premium skips the extra click).',
+    required: false,
+    partition: NEXUS_PARTITION,
+    signInUrl: `https://users.nexusmods.com/auth/sign_in?redirect_url=${encodeURIComponent('https://www.nexusmods.com/settings/api-keys')}`,
+    registerUrl: 'https://users.nexusmods.com/register',
+    keyPageUrl: 'https://www.nexusmods.com/settings/api-keys',
+    isKeyPage: (u) => /(^|\.)nexusmods\.com$/i.test(u.hostname) && /^\/settings\/api-keys/i.test(u.pathname),
+    isAuthPage: (u) => /^users\.nexusmods\.com$/i.test(u.hostname) || /accounts\.google|discord\.com|steamcommunity\.com\/openid|appleid\.apple/i.test(u.href),
+    isSitePage: (u) => /^(www\.|next\.)?nexusmods\.com$/i.test(u.hostname),
+    keyPattern: '[A-Za-z0-9+/]{16,}={0,2}--[A-Za-z0-9+/]{8,}={0,2}--[A-Za-z0-9+/]{8,}={0,2}',
+    section: 'personal api key',
+    createButton: '^(request|generate|create)( an?| new)?( personal)?( api)? key$',
+    loggedOutText: 'please log in again|your session has expired|log in to continue',
+    async validate(key) {
+      const v = await httpJson<{ name: string; is_premium?: boolean; is_supporter?: boolean; profile_url?: string }>('https://api.nexusmods.com/v1/users/validate.json', {
+        headers: { apikey: key }
+      })
+      return { user: v.name, avatar: v.profile_url, detail: v.is_premium ? 'Premium: downloads start without a click' : v.is_supporter ? 'Supporter (free downloads)' : 'Free account' }
+    },
+    hints: {
+      signIn: 'Log in to Nexus Mods (or create a free account). NexusForge picks up your API key by itself afterwards.',
+      register: 'Create your free Nexus Mods account. After confirming your e-mail, log in here; NexusForge does the rest.',
+      keyPage: 'Reading your personal API key…',
+      noKey: 'Click the highlighted button to create your personal API key; NexusForge reads it as soon as it appears.'
+    }
+  },
+  {
+    id: 'modio',
+    name: 'mod.io',
+    unlocks: 'Searching and downloading mod.io mods (Ready Or Not, Ground Branch, SnowRunner, …).',
+    required: true,
+    partition: 'persist:modio',
+    // The key page sends visitors to the login; a new e-mail address creates the account there too.
+    signInUrl: 'https://mod.io/me/access',
+    registerUrl: 'https://mod.io/me/access',
+    keyPageUrl: 'https://mod.io/me/access',
+    isKeyPage: (u) => /(^|\.)mod\.io$/i.test(u.hostname) && /^\/me\/access/i.test(u.pathname),
+    isAuthPage: (u) => /\/(login|register|signin|auth)/i.test(u.pathname) || /accounts\.google|discord\.com|steamcommunity\.com\/openid|appleid\.apple|login\.live\.com/i.test(u.href),
+    isSitePage: (u) => /^(www\.)?mod\.io$/i.test(u.hostname),
+    keyPattern: '\\b[a-f0-9]{32}\\b',
+    section: 'api key',
+    createButton: '^(request|generate|create)( an?| new)?( read-only)?( api)? key$',
+    loggedOutText: 'log ?in to continue|sign in to continue',
+    async validate(key) {
+      await httpJson(`https://api.mod.io/v1/games?api_key=${encodeURIComponent(key)}&_limit=1`)
+      return { detail: 'API key active' }
+    },
+    hints: {
+      signIn: 'Sign in to mod.io (an e-mail code, Google, Steam or Discord). NexusForge reads your API key afterwards.',
+      register: 'Enter your e-mail to create a mod.io account (it sends a code). NexusForge reads your API key afterwards.',
+      keyPage: 'Reading your mod.io API key…',
+      noKey: 'Under "API key", accept the terms and click the highlighted button to create your key; NexusForge reads it right away.'
+    }
+  },
+  {
+    id: 'curseforge',
+    name: 'CurseForge',
+    unlocks: 'Searching and downloading CurseForge mods (Minecraft, The Sims 4, Stardew Valley, …).',
+    required: true,
+    partition: 'persist:curseforge-console',
+    signInUrl: 'https://console.curseforge.com/#/api-keys',
+    registerUrl: 'https://console.curseforge.com/#/signup',
+    keyPageUrl: 'https://console.curseforge.com/#/api-keys',
+    isKeyPage: (u) => /^console\.curseforge\.com$/i.test(u.hostname) && /api-keys/i.test(u.hash + u.pathname),
+    isAuthPage: (u) => /login|signin|sign-in|signup|sign-up|auth|register/i.test(u.hash + u.pathname) || !/curseforge\.com$/i.test(u.hostname),
+    isSitePage: (u) => /^console\.curseforge\.com$/i.test(u.hostname),
+    keyPattern: '\\$2a\\$10\\$[A-Za-z0-9./]{53}',
+    section: 'api key',
+    createButton: '^(generate|create|request)( an?| new)?( api)? key$',
+    loggedOutText: 'sign in to continue|log ?in to continue',
+    async validate(key) {
+      await httpJson('https://api.curseforge.com/v1/games?pageSize=1', { headers: { 'x-api-key': key } })
+      return { detail: 'API key active' }
+    },
+    hints: {
+      signIn: 'Log in to the CurseForge console with Google (or sign up, it is free). NexusForge reads your API key from the "API keys" page.',
+      register: 'Sign up for the free CurseForge console with Google. NexusForge reads your API key from the "API keys" page afterwards.',
+      keyPage: 'Reading your CurseForge API key…',
+      noKey: 'Open "API keys" (or click the highlighted button); NexusForge reads the key as soon as it is shown.'
+    }
+  }
+]
+
+// ---------------------------------------------------------------------------
+// Stored profiles
+
+function profiles(): Partial<Record<AccountId, AccountProfile>> {
+  return db().get('accounts') ?? {}
+}
+
+function saveProfile(id: AccountId, p: AccountProfile | undefined): void {
+  const all = { ...profiles() }
+  if (p) all[id] = p
+  else delete all[id]
+  db().set('accounts', all)
+}
+
+const busy = new Set<AccountId>()
+
+function info(def: WebAccount | 'steam'): AccountInfo {
+  if (def === 'steam') {
+    const user = getSettings().steamAccount
+    return {
+      id: 'steam',
+      name: 'Steam',
+      unlocks: 'Steam Workshop downloads for games your account owns (most Workshops refuse anonymous downloads).',
+      signedIn: Boolean(user),
+      user: user || undefined,
+      detail: user ? 'SteamCMD is signed in' : undefined,
+      busy: busy.has('steam'),
+      web: false,
+      required: false
+    }
+  }
+  const key = getApiKey(def.id)
+  const p = profiles()[def.id]
+  return {
+    id: def.id,
+    name: def.name,
+    unlocks: def.unlocks,
+    signedIn: Boolean(key),
+    user: key ? p?.user : undefined,
+    avatar: key ? p?.avatar : undefined,
+    detail: key ? (p?.detail ?? 'API key saved') : undefined,
+    busy: busy.has(def.id),
+    web: true,
+    registerUrl: def.registerUrl,
+    required: def.required
+  }
+}
+
+export function listAccounts(): AccountInfo[] {
+  return [...WEB_ACCOUNTS.map((d) => info(d)), info('steam')]
+}
+
+function publish(): void {
+  emit('accounts:changed', listAccounts())
+}
+
+function webDef(id: AccountId): WebAccount {
+  const d = WEB_ACCOUNTS.find((x) => x.id === id)
+  if (!d) throw new Error(`Unknown account: ${id}`)
+  return d
+}
+
+/** Saves a key someone pasted (or the sign-in found) after checking it against the site. */
+async function acceptKey(def: WebAccount, key: string): Promise<AccountProfile> {
+  const profile = await def.validate(key)
+  const enabled = getSettings().sources[def.id]?.enabled ?? true
+  setSettings({ sources: { [def.id]: { enabled, apiKey: key } } })
+  saveProfile(def.id, profile)
+  return profile
+}
+
+export async function saveAccountKey(id: AccountId, key: string): Promise<AccountInfo> {
+  const def = webDef(id)
+  const k = key.trim()
+  if (!k) throw new Error('Paste the key first.')
+  try {
+    await acceptKey(def, k)
+  } catch (err) {
+    throw new Error(err instanceof HttpError && (err.status === 401 || err.status === 403) ? `${def.name} did not accept that key.` : (err as Error).message)
+  }
+  publish()
+  return info(def)
+}
+
+// ---------------------------------------------------------------------------
+// Web sign-in
+
+/** Runs in the key page (isolated world): finds key-looking strings, preferring the user's own section. */
+function keyProbe(def: WebAccount, markLabel: string): string {
+  return `(() => {
+${MARK}
+const KEY = new RegExp(${JSON.stringify(def.keyPattern)}, 'g');
+const SECTION = new RegExp(${JSON.stringify(def.section)}, 'i');
+const CREATE = new RegExp(${JSON.stringify(def.createButton)}, 'i');
+const LOGGED_OUT = new RegExp(${JSON.stringify(def.loggedOutText)}, 'i');
+const body = document.body ? (document.body.innerText || '') : '';
+const loggedOut = LOGGED_OUT.test(body);
+const preferred = [], other = [];
+const push = (s, el) => {
+  if (!s) return;
+  for (const m of String(s).matchAll(KEY)) {
+    let near = false;
+    for (let p = el, i = 0; p && i < 8; p = p.parentElement || (p.getRootNode && p.getRootNode().host), i++) {
+      if (SECTION.test((p.innerText || p.textContent || '').slice(0, 4000))) { near = true; break; }
+    }
+    (near ? preferred : other).push(m[0]);
+  }
+};
+for (const el of all('input, textarea')) push(el.value, el);
+for (const el of all('code, pre, kbd, samp, span, p, div, td, li, dd')) if (!el.children.length) push(el.textContent, el);
+for (const el of all('[value], [data-key], [data-value], [data-clipboard-text]')) push(el.getAttribute('value') || el.getAttribute('data-key') || el.getAttribute('data-value') || el.getAttribute('data-clipboard-text'), el);
+const keys = [...new Set([...preferred, ...other])].slice(0, 8);
+let canCreate = false;
+if (!keys.length && !loggedOut) {
+  const btn = find(CREATE);
+  if (btn) { canCreate = true; mark(btn, ${JSON.stringify(markLabel)}); }
+}
+return { keys, loggedOut, canCreate };
+})()`
+}
+
+const pending = new Map<AccountId, Promise<AccountInfo>>()
+
+/**
+ * Opens the site's sign-in (or registration) page in the site panel and finishes once a working API key has been
+ * read from the site. Rejects when the user cancels.
+ */
+export function signIn(id: AccountId, register = false): Promise<AccountInfo> {
+  if (id === 'steam') throw new Error('Steam signs in with your user name and password; use the form under Accounts.')
+  const running = pending.get(id)
+  if (running) return running
+  const def = webDef(id)
+  const p = runWebSignIn(def, register).finally(() => {
+    pending.delete(id)
+    busy.delete(id)
+    publish()
+  })
+  pending.set(id, p)
+  return p
+}
+
+function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> {
+  return new Promise<AccountInfo>((resolve, reject) => {
+    const panelId = `account:${def.id}`
+    const view = siteView(def.partition)
+    const wc = view.webContents
+    let done = false
+    const tried = new Set<string>()
+    let keyPageVisits = 0
+    let lastSiteRedirect = 0
+    let probing = false
+    busy.add(def.id)
+    publish()
+
+    const finish = (err?: Error, result?: AccountInfo) => {
+      if (done) return
+      done = true
+      clearInterval(timer)
+      removePanelEntry(panelId)
+      if (err) reject(err)
+      else resolve(result!)
+    }
+
+    const probe = async () => {
+      if (done || probing || wc.isDestroyed()) return
+      probing = true
+      try {
+        let url: URL
+        try {
+          url = new URL(wc.getURL())
+        } catch {
+          return
+        }
+        if (def.isKeyPage(url)) {
+          const state = (await wc.executeJavaScriptInIsolatedWorld(1002, [{ code: keyProbe(def, def.hints.noKey) }]).catch(() => undefined)) as
+            | { keys: string[]; loggedOut: boolean; canCreate: boolean }
+            | undefined
+          if (!state) return
+          if (state.loggedOut) {
+            // The key page doesn't redirect visitors itself; send them to the login once per visit.
+            if (keyPageVisits++ < 3) {
+              setPanelHint(panelId, register ? def.hints.register : def.hints.signIn)
+              void wc.loadURL(def.signInUrl)
+            }
+            return
+          }
+          for (const key of state.keys) {
+            if (tried.has(key)) continue
+            tried.add(key)
+            try {
+              const profile = await acceptKey(def, key)
+              log.info(`${def.name}: signed in${profile.user ? ` as ${profile.user}` : ''}`)
+              toast('success', `Signed in to ${def.name}`, profile.user ? `as ${profile.user}. ${profile.detail ?? ''}` : profile.detail)
+              finish(undefined, info(def))
+              return
+            } catch (err) {
+              log.warn(`${def.name}: a key on the page was not accepted (${(err as Error).message})`)
+            }
+          }
+          setPanelHint(panelId, state.canCreate ? def.hints.noKey : state.keys.length ? `${def.name} did not accept the key shown on this page. Create a new one here.` : def.hints.keyPage)
+          return
+        }
+        // Signed in and back on the site (after login, registration or a social login): go to the key page.
+        if (!def.isAuthPage(url) && def.isSitePage(url) && Date.now() - lastSiteRedirect > 8000) {
+          lastSiteRedirect = Date.now()
+          void wc.loadURL(def.keyPageUrl)
+        }
+      } finally {
+        probing = false
+      }
+    }
+
+    const timer = setInterval(() => void probe(), 1200)
+    wc.on('did-finish-load', () => void probe())
+    wc.once('destroyed', () => finish(new Error('Sign-in closed')))
+
+    addPanelEntry({
+      id: panelId,
+      title: register ? `Create a ${def.name} account` : `Sign in to ${def.name}`,
+      hint: register ? def.hints.register : def.hints.signIn,
+      view,
+      show: true,
+      onCancel: () => finish(new Error('Sign-in cancelled'))
+    })
+    void wc.loadURL(register ? def.registerUrl : def.signInUrl)
+  })
+}
+
+export async function signOut(id: AccountId): Promise<AccountInfo[]> {
+  if (id === 'steam') {
+    const user = getSettings().steamAccount
+    setSettings({ steamAccount: '' })
+    if (user) await steamLogout(user).catch(() => {})
+  } else {
+    const def = webDef(id)
+    const enabled = getSettings().sources[def.id]?.enabled ?? true
+    setSettings({ sources: { [def.id]: { enabled, apiKey: '' } } })
+    saveProfile(def.id, undefined)
+    await clearSiteSession(def.partition).catch(() => {})
+  }
+  log.info(`signed out of ${id}`)
+  publish()
+  return listAccounts()
+}
+
+export async function signInSteam(req: SteamLoginRequest, onStatus: (s: string) => void): Promise<SteamLoginResponse> {
+  const user = req.user?.trim()
+  if (!user || !req.password) return { ok: false, message: 'Enter your Steam user name and password.' }
+  busy.add('steam')
+  publish()
+  try {
+    const res = await steamLogin(user, req.password, req.code?.trim() || undefined, onStatus)
+    if (!res.ok) return res
+    setSettings({ steamAccount: user })
+    log.info('SteamCMD signed in')
+    return { ok: true, account: info('steam') }
+  } finally {
+    busy.delete('steam')
+    publish()
+  }
+}

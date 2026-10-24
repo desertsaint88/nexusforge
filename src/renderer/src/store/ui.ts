@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Toast } from '@shared/types'
+import type { ResolvedDependency, Toast } from '@shared/types'
 
 export type GameTab = 'mods' | 'conflicts' | 'profiles' | 'settings'
 export type SettingsSection = 'general' | 'library' | 'mods' | 'sources' | 'advanced'
@@ -9,6 +9,7 @@ export type Route =
   | { name: 'game'; gameId: string; tab?: GameTab }
   | { name: 'browse'; gameId?: string; sourceId?: string }
   | { name: 'downloads' }
+  | { name: 'accounts' }
   | { name: 'settings'; section?: SettingsSection }
 
 interface NavState {
@@ -85,3 +86,34 @@ export const useConfirm = create<ConfirmState>((set, get) => ({
 }))
 
 export const confirm = (opts: Omit<ConfirmRequest, 'resolve'>) => useConfirm.getState().ask(opts)
+
+export interface DependencyChoice {
+  /** Dependencies to download and install. */
+  install: ResolvedDependency[]
+  /** Enable required dependencies that are installed but switched off. */
+  enableDisabled: boolean
+}
+
+interface DependencyRequest {
+  modName: string
+  gameName: string
+  deps: ResolvedDependency[]
+  resolve(choice: DependencyChoice | null): void
+}
+
+interface DependencyState {
+  request?: DependencyRequest
+  ask(modName: string, gameName: string, deps: ResolvedDependency[]): Promise<DependencyChoice | null>
+  close(choice: DependencyChoice | null): void
+}
+
+export const useDependencyDialog = create<DependencyState>((set, get) => ({
+  request: undefined,
+  ask(modName, gameName, deps) {
+    return new Promise((resolve) => set({ request: { modName, gameName, deps, resolve } }))
+  },
+  close(choice) {
+    get().request?.resolve(choice)
+    set({ request: undefined })
+  }
+}))

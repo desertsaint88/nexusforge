@@ -1,9 +1,15 @@
-// Known modding layouts. `target` is relative to the game's install folder.
+// Known modding layouts. `target` is relative to the game's install folder, or absolute with %ENV% variables
+// for games that load mods from the user's profile.
+
+import { readFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 
 export interface ModPreset {
   target: string
   /** Keep a mod archive's single top-level folder (games where every mod lives in its own folder). */
   keepWrapper?: boolean
+  /** Mods stay packed: the game loads the .zip itself (BeamNG.drive). */
+  keepArchive?: boolean
   sources?: Record<string, string>
 }
 
@@ -38,8 +44,31 @@ const PRESETS: PresetEntry[] = [
   { steam: ['447040'], names: ['watch dogs 2', 'watch_dogs 2'], target: '', sources: { nexus: 'watchdogs2' } },
   { steam: ['1426210'], names: ['it takes two'], target: '' },
   { steam: ['105600'], names: ['terraria'], target: '', sources: { nexus: 'terraria' } },
-  { steam: ['548430'], names: ['deep rock galactic'], target: 'FSD/Mods', keepWrapper: true, sources: { thunderstore: 'deep-rock-galactic' } }
+  { steam: ['548430'], names: ['deep rock galactic'], target: 'FSD/Mods', keepWrapper: true, sources: { thunderstore: 'deep-rock-galactic' } },
+  // BeamNG reads mod zips from its user folder (%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods unless startup.ini moves it).
+  { steam: ['284160'], names: ['beamng drive', 'beamng.drive', 'beamng'], target: '%BEAMNG_USER%/current/mods', keepArchive: true, sources: { beamng: 'beamng', nexus: 'beamngdrive', moddb: 'beamngdrive' } },
+  // Unreal Engine games load extra .pak files from Content/Paks/~mods.
+  { steam: ['1144200'], names: ['ready or not'], target: 'ReadyOrNot/Content/Paks/~mods', sources: { nexus: 'readyornot' } }
 ]
+
+/** BeamNG's user folder: startup.ini's UserPath when set, else the default under LocalAppData. */
+function beamngUserFolder(installDir: string): string {
+  try {
+    const ini = readFileSync(join(installDir, 'startup.ini'), 'utf8')
+    const set = ini.match(/^\s*UserPath\s*=\s*(\S.*?)\s*$/m)?.[1]
+    if (set) return isAbsolute(set) ? set : join(installDir, set)
+  } catch {
+    // no startup.ini: default folder
+  }
+  return join(process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? '', 'AppData', 'Local'), 'BeamNG', 'BeamNG.drive')
+}
+
+/** Absolute deploy folder for a preset target. */
+export function presetTarget(target: string, installDir: string): string {
+  if (target.startsWith('%BEAMNG_USER%')) return join(beamngUserFolder(installDir), ...target.slice('%BEAMNG_USER%'.length).split('/').filter(Boolean))
+  const expanded = target.replace(/%([A-Z_]+)%/gi, (m, v: string) => process.env[v] ?? m)
+  return isAbsolute(expanded) ? join(...expanded.split('/')) : join(installDir, ...expanded.split('/').filter(Boolean))
+}
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 

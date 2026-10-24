@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CircleAlert, Compass, Download, Gamepad2, Settings, ThumbsUp, Clock } from 'lucide-react'
-import type { ModSearchResult, SourceInfo } from '@shared/types'
+import { CircleAlert, Compass, Download, Gamepad2, KeyRound, LogIn, Settings, ThumbsUp, Clock } from 'lucide-react'
+import { accountForSource, ensureSignedIn } from '../store/accounts'
+import type { ModSearchResult, SourceGameBinding, SourceInfo } from '@shared/types'
 import { invoke } from '../lib/api'
 import { cn, formatCount, relativeTime } from '../lib/format'
 import { useLibrary, visibleGames } from '../store/library'
 import { useNav } from '../store/ui'
-import { Button, SearchInput } from '../components/ui'
+import { Badge, Button, SearchInput, Spinner } from '../components/ui'
 import { Select } from '../components/Popover'
 import { EmptyState } from '../components/Chrome'
 import { GameIcon } from '../components/GameArt'
@@ -71,6 +72,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const [error, setError] = useState<string | undefined>()
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState<ModSearchResult | undefined>()
+  const [attempt, setAttempt] = useState(0)
   const seq = useRef(0)
 
   useEffect(() => {
@@ -86,6 +88,24 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   }, [initialGame])
 
   const game = games.find((g) => g.id === gameId)
+  const source = sources.find((s) => s.id === sourceId)
+  const updateGame = useLibrary((s) => s.update)
+
+  // Which game the source searches ("Casualties: Unknown" on Nexus is "scavprototype"); shown so it can be corrected.
+  const [bindings, setBindings] = useState<SourceGameBinding[] | undefined>()
+  useEffect(() => {
+    setBindings(undefined)
+    if (!source?.bindingLabel || !gameId) return
+    let alive = true
+    invoke('sources:bindings', source.id, gameId)
+      .then((b) => alive && setBindings(b))
+      .catch(() => alive && setBindings([]))
+    return () => {
+      alive = false
+    }
+  }, [source?.id, source?.bindingLabel, gameId])
+  const chosenBinding = sourceId ? game?.modding.sources[sourceId] : undefined
+  const effectiveBinding = chosenBinding ?? bindings?.[0]?.value
 
   // Debounced search; stale responses are dropped.
   useEffect(() => {
@@ -107,9 +127,8 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
       query ? 380 : 0
     )
     return () => clearTimeout(t)
-  }, [sourceId, query, gameId])
+  }, [sourceId, query, gameId, chosenBinding, attempt])
 
-  const source = sources.find((s) => s.id === sourceId)
   const gameOptions = useMemo(() => games.map((g) => ({ value: g.id, label: g.name, icon: <GameIcon game={g} className="size-5 rounded" /> })), [games])
   const needsBinding = error && /choose|community|game domain|pick a game/i.test(error)
 
@@ -124,7 +143,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div className="glass flex rounded-2xl p-1">
+        <div className="glass flex flex-wrap rounded-2xl p-1">
           {sources.map((s) => (
             <button
               key={s.id}
@@ -139,13 +158,53 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
         <SearchInput value={query} onChange={setQuery} placeholder={source ? `Search ${source.name}${game ? ` for ${game.name}` : ''}` : 'Search'} className="min-w-[280px] flex-1" />
       </div>
 
-      {source?.description && !error && <p className="-mt-3 mb-5 text-[12.5px] text-ink-400">{source.description}</p>}
+      {source?.bindingLabel && game && (
+        <div className="-mt-2 mb-4 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-300">
+          <span>
+            {source.name} lists {game.name} as
+          </span>
+          {bindings === undefined ? (
+            <Spinner className="size-3.5" />
+          ) : (
+            <Select
+              value={effectiveBinding}
+              width={360}
+              className="h-8 min-w-[220px] text-[12.5px]"
+              placeholder="Not found, pick one"
+              options={[
+                ...(chosenBinding && !bindings.some((b) => b.value === chosenBinding) ? [{ value: chosenBinding, label: chosenBinding }] : []),
+                ...bindings.map((b) => ({ value: b.value, label: b.label, hint: b.value }))
+              ]}
+              onChange={(v) => void updateGame(game.id, { modding: { ...game.modding, sources: { ...game.modding.sources, [source.id]: v } } })}
+            />
+          )}
+          {!chosenBinding && effectiveBinding && <Badge>auto-detected</Badge>}
+        </div>
+      )}
+
+      {source?.description && !error && <p className="mb-5 text-[12.5px] text-ink-400">{source.description}</p>}
 
       {error ? (
         <EmptyState icon={<CircleAlert />} title="This source can't search right now" message={error}>
           {needsBinding && game && (
             <Button variant="primary" icon={<Settings className="size-4" />} onClick={() => navigate({ name: 'game', gameId: game.id, tab: 'settings' })}>
               Open {game.name} settings
+            </Button>
+          )}
+          {/api key/i.test(error) && sourceId && accountForSource(sourceId) && (
+            <Button
+              variant="primary"
+              icon={<LogIn className="size-4" />}
+              onClick={async () => {
+                if (await ensureSignedIn([sourceId], `${source?.name ?? 'This site'} only works with your (free) account.`)) setAttempt((n) => n + 1)
+              }}
+            >
+              Sign in to {source?.name}
+            </Button>
+          )}
+          {/api key/i.test(error) && (
+            <Button icon={<KeyRound className="size-4" />} onClick={() => navigate({ name: 'accounts' })}>
+              Accounts
             </Button>
           )}
         </EmptyState>

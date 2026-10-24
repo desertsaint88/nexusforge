@@ -8,11 +8,16 @@ import { subscribeDownloads, useDownloads } from './store/downloads'
 import { useNav, useToasts } from './store/ui'
 import { Sidebar, TitleBar, Toasts } from './components/Chrome'
 import { ConfirmHost } from './components/Modal'
+import { DependencyDialogHost } from './components/DependencyDialog'
+import { SitePanelHost } from './components/SitePanel'
 import { LibraryPage } from './pages/LibraryPage'
 import { GamePage } from './pages/GamePage'
 import { BrowsePage } from './pages/BrowsePage'
 import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { AccountsPage } from './pages/AccountsPage'
+import { AccountPromptHost } from './components/AccountPrompt'
+import { subscribeAccounts, useAccounts } from './store/accounts'
 import { Onboarding } from './pages/Onboarding'
 
 function Page() {
@@ -32,6 +37,7 @@ function Page() {
         {route.name === 'game' && <GamePage gameId={route.gameId} tab={route.tab} />}
         {route.name === 'browse' && <BrowsePage gameId={route.gameId} sourceId={route.sourceId} />}
         {route.name === 'downloads' && <DownloadsPage />}
+        {route.name === 'accounts' && <AccountsPage />}
         {route.name === 'settings' && <SettingsPage section={route.section} />}
       </motion.div>
     </AnimatePresence>
@@ -46,8 +52,9 @@ export function App() {
     subscribeLibrary()
     subscribeMods()
     subscribeDownloads()
+    subscribeAccounts()
     const off = on('toast', (t) => useToasts.getState().push(t))
-    void Promise.all([useApp.getState().load(), useLibrary.getState().load(), useDownloads.getState().load()]).finally(() => setReady(true))
+    void Promise.all([useApp.getState().load(), useLibrary.getState().load(), useDownloads.getState().load(), useAccounts.getState().load()]).finally(() => setReady(true))
     return off
   }, [])
 
@@ -62,8 +69,11 @@ export function App() {
           </main>
         </div>
         <AnimatePresence>{ready && settings && !settings.firstRunComplete && <Onboarding />}</AnimatePresence>
+        <SitePanelHost />
         <Toasts />
         <ConfirmHost />
+        <DependencyDialogHost />
+        <AccountPromptHost />
       </div>
     </MotionConfig>
   )

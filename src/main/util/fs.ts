@@ -96,6 +96,25 @@ export async function moveFile(from: string, to: string): Promise<void> {
   }
 }
 
+/**
+ * Rename a folder. On Windows a virus scanner briefly locks freshly extracted DLLs, which makes the rename
+ * fail with EPERM/EBUSY/EACCES; retry for a few seconds, then copy + delete instead.
+ */
+export async function renameDir(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fsp.rename(from, to)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES' && code !== 'EXDEV') throw err
+      if (code === 'EXDEV' || attempt >= 8) break
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)))
+    }
+  }
+  await fsp.cp(from, to, { recursive: true, errorOnExist: true, force: false })
+  await fsp.rm(from, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+}
+
 /** Remove now-empty directories from `start` up to (not including) `stopAt`. */
 export async function pruneEmptyDirs(start: string, stopAt: string): Promise<void> {
   let dir = start

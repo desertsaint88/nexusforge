@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { FolderOpen, FolderPlus, Gamepad2, HardDrive, KeyRound, Monitor, Palette, Plug, Plus, RefreshCw, Rss, ScrollText, ShieldAlert, ShieldCheck, Trash, Wand2, Info } from 'lucide-react'
+import { ExternalLink, FolderOpen, FolderPlus, Gamepad2, HardDrive, KeyRound, Link2, LogIn, Monitor, Palette, Plug, Plus, RefreshCw, Rss, ScrollText, ShieldAlert, ShieldCheck, Trash, Wand2, Info } from 'lucide-react'
+import { accountForSource, useAccounts } from '../store/accounts'
 import type { AccentName, DeployStrategy, FeedConfig, PluginInfo, Settings, SourceInfo } from '@shared/types'
 import { invoke } from '../lib/api'
 import { cn } from '../lib/format'
@@ -80,8 +81,17 @@ function LibrarySettings({ s, update }: { s: Settings; update(p: Partial<Setting
     { key: 'epic', label: 'Epic Games Store', description: 'Install manifests in ProgramData.' },
     { key: 'xbox', label: 'Xbox / Microsoft Store', description: 'Game Pass and Store games in XboxGames folders.' },
     { key: 'gog', label: 'GOG', description: 'GOG Galaxy and offline installers (registry).' },
-    { key: 'custom', label: 'Custom folders', description: 'Every sub folder of the folders below counts as one game.' }
+    { key: 'custom', label: 'Game folders', description: 'Games outside the launchers: your drives (below) and your own folders. Every sub folder counts as one game.' }
   ]
+  const [driveRoots, setDriveRoots] = useState<string[] | null>(null)
+  useEffect(() => {
+    if (!s.scanAllDrives) return setDriveRoots([])
+    let live = true
+    void invoke('library:driveRoots').then((r) => live && setDriveRoots(r), () => live && setDriveRoots([]))
+    return () => {
+      live = false
+    }
+  }, [s.scanAllDrives, scanning])
   const addFolder = async () => {
     const dir = await invoke('app:pickFolder', { title: 'Folder that contains your games' })
     if (!dir) return
@@ -108,6 +118,30 @@ function LibrarySettings({ s, update }: { s: Settings; update(p: Partial<Setting
         <Row title="Fetch artwork from the Steam store" description="For games outside Steam, NexusForge looks up the game name on the Steam store to get cover art. Only the name is sent.">
           <Toggle checked={s.autoFetchArtwork} onChange={(v) => update({ autoFetchArtwork: v })} />
         </Row>
+      </Panel>
+      <Panel title="Every drive" icon={<HardDrive />}>
+        <Row
+          title="Find games on all drives"
+          description="Looks at every local drive (C:, E:, …) for game folders: “Games” folders, Steam libraries Steam doesn't list, and the Epic, GOG, EA, Ubisoft, Rockstar, Riot and Amazon install folders. Read-only."
+        >
+          <Toggle checked={s.scanAllDrives} disabled={!s.scanPlatforms.custom} onChange={(v) => update({ scanAllDrives: v })} />
+        </Row>
+        {s.scanAllDrives && s.scanPlatforms.custom && (
+          <div className="mt-1 space-y-1.5 pb-1">
+            {driveRoots === null ? (
+              <p className="text-[12.5px] text-ink-400">Looking at your drives…</p>
+            ) : driveRoots.length ? (
+              driveRoots.map((f) => (
+                <div key={f} className="flex items-center gap-3 rounded-xl border border-white/[0.05] bg-black/20 px-4 py-2">
+                  <HardDrive className="size-3.5 text-ink-400" />
+                  <span className="selectable min-w-0 flex-1 truncate font-mono text-[12px] text-ink-300">{f}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-[12.5px] text-ink-400">No game folders found on your drives. Add yours below.</p>
+            )}
+          </div>
+        )}
       </Panel>
       <Panel
         title="Custom game folders"
@@ -156,6 +190,35 @@ function ModsSettings({ s, update }: { s: Settings; update(p: Partial<Settings>)
               }}
             >
               Change
+            </Button>
+          </div>
+        </Field>
+      </Panel>
+      <Panel title="Dependencies" icon={<Link2 />}>
+        <Row title="When a mod needs other mods" description="Required mods are placed before the mod in the load order. Mods from outside NexusForge (script extenders, DLC) are always listed so you can get them yourself.">
+          <Segmented<Settings['dependencyMode']>
+            value={s.dependencyMode}
+            onChange={(v) => update({ dependencyMode: v })}
+            options={[
+              { value: 'ask', label: 'Ask me' },
+              { value: 'always', label: 'Install automatically' },
+              { value: 'never', label: 'Never' }
+            ]}
+          />
+        </Row>
+      </Panel>
+      <Panel title="Steam Workshop" icon={<Gamepad2 />}>
+        <Field label="SteamCMD" hint="Used for Workshop downloads with an anonymous login. Leave empty to use C:\SteamCMD if it exists, or a copy NexusForge downloads itself.">
+          <div className="mt-1 flex gap-2">
+            <Input mono value={s.steamcmdPath} placeholder="automatic" onChange={(e) => update({ steamcmdPath: e.target.value })} />
+            <Button
+              icon={<FolderOpen className="size-4" />}
+              onClick={async () => {
+                const f = await invoke('app:pickFile', { title: 'steamcmd.exe', filters: [{ name: 'SteamCMD', extensions: ['exe'] }] })
+                if (f) update({ steamcmdPath: f })
+              }}
+            >
+              Browse
             </Button>
           </div>
         </Field>
@@ -212,7 +275,24 @@ function SourcesSettings({ s, update }: { s: Settings; update(p: Partial<Setting
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink-100">
                   {src.name}
-                  {src.apiKey && (src.hasKey ? <Badge tone="success">API key saved</Badge> : <Badge>no API key</Badge>)}
+                  {src.apiKey && (src.hasKey ? <Badge tone="success">API key saved</Badge> : <Badge tone={src.apiKey === 'required' ? 'warning' : 'neutral'}>{src.apiKey === 'required' ? 'needs API key' : 'no API key'}</Badge>)}
+                  {!src.hasKey && accountForSource(src.id) ? (
+                    <button
+                      className="flex items-center gap-1 text-[12px] font-normal text-[color-mix(in_oklab,var(--nf-accent)_65%,white)] hover:underline"
+                      onClick={async () => {
+                        if (await useAccounts.getState().signIn(accountForSource(src.id)!)) void refresh()
+                      }}
+                    >
+                      sign in to get it automatically <LogIn className="size-3" />
+                    </button>
+                  ) : (
+                    src.apiKeyUrl &&
+                    !src.hasKey && (
+                      <button className="flex items-center gap-1 text-[12px] font-normal text-[color-mix(in_oklab,var(--nf-accent)_65%,white)] hover:underline" onClick={() => void invoke('app:openExternal', src.apiKeyUrl!)}>
+                        get a key <ExternalLink className="size-3" />
+                      </button>
+                    )
+                  )}
                 </div>
                 <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-400">{src.description}</div>
               </div>

@@ -1,6 +1,7 @@
 import { promises as fsp } from 'node:fs'
 import { join } from 'node:path'
 import type { Profile } from '@shared/types'
+import { placeInOrder } from './order'
 import { db } from '../store'
 import { paths } from '../paths'
 import { readJson, safeReaddir, shortId, writeJsonAtomic } from '../util/fs'
@@ -103,14 +104,29 @@ export async function setActiveProfile(gameId: string, profileId: string): Promi
   setActiveId(gameId, profileId)
 }
 
-/** A freshly installed mod goes to the end of every profile and is enabled in the active one. */
-export async function addModToProfiles(gameId: string, modId: string): Promise<void> {
-  const { profiles, activeId } = await listProfiles(gameId)
-  for (const p of profiles) {
-    if (!p.order.includes(modId)) p.order.push(modId)
-    if (p.id === activeId && !p.enabled.includes(modId)) p.enabled.push(modId)
-    await saveProfile(p)
+const profileLocks = new Map<string, Promise<unknown>>()
+
+/**
+ * A freshly installed mod is placed by its dependencies in every profile and enabled in the active one.
+ * Installs finishing at the same time (a mod and its dependency) are applied one after the other, so neither
+ * overwrites the other's change and a new game doesn't get two "Default" profiles.
+ */
+export function addModToProfiles(gameId: string, modId: string): Promise<void> {
+  const run = async () => {
+    const { profiles, activeId } = await listProfiles(gameId)
+    const mods = db().get('mods')[gameId] ?? {}
+    for (const p of profiles) {
+      p.order = placeInOrder(p.order, modId, mods)
+      if (p.id === activeId && !p.enabled.includes(modId)) p.enabled.push(modId)
+      await saveProfile(p)
+    }
   }
+  const next = (profileLocks.get(gameId) ?? Promise.resolve()).catch(() => {}).then(run)
+  profileLocks.set(gameId, next)
+  void next.finally(() => {
+    if (profileLocks.get(gameId) === next) profileLocks.delete(gameId)
+  }).catch(() => {})
+  return next
 }
 
 export async function deleteAllProfiles(gameId: string): Promise<void> {

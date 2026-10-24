@@ -44,6 +44,10 @@ export interface Game {
   playtimeMinutes: number
   lastPlayed?: number
   sizeBytes?: number
+  /** Version read from the game executable (or Steam build id). */
+  version?: string
+  /** Console game started through this emulator (exePath is the emulator). */
+  emulator?: string
   addedAt: number
   favorite?: boolean
   hidden?: boolean
@@ -65,6 +69,7 @@ export interface DetectedGame {
   playtimeMinutes?: number
   lastPlayed?: number
   sizeBytes?: number
+  emulator?: string
 }
 
 export interface ScanProgress {
@@ -98,6 +103,7 @@ export interface ModSourceRef {
   modId: string
   versionId?: string
   url?: string
+  name?: string
 }
 
 export interface InstalledMod {
@@ -118,6 +124,8 @@ export interface InstalledMod {
   sizeBytes: number
   fileCount: number
   originalFile?: string
+  /** Mods this one needs (source refs), used for load order and missing-dependency warnings. */
+  requires?: ModSourceRef[]
 }
 
 export interface Profile {
@@ -244,6 +252,30 @@ export interface ModSearchResult {
   url?: string
 }
 
+/** Another mod (or external tool) a mod needs. */
+export interface ModDependency {
+  /** Source to install it from; empty for external requirements (script extenders, DLC, websites). */
+  sourceId: string
+  modId?: string
+  /** Specific version, when the source pins one. */
+  versionId?: string
+  name: string
+  required: boolean
+  /** NexusForge can download and install it by itself. */
+  installable: boolean
+  url?: string
+  note?: string
+}
+
+export interface ResolvedDependency extends ModDependency {
+  /** Already installed for this game. */
+  installed: boolean
+  /** Installed but disabled in the active profile. */
+  disabled?: boolean
+  /** Name of the mod that pulled this one in (for nested dependencies). */
+  requiredBy: string
+}
+
 export interface ModVersion {
   id: string
   name: string
@@ -252,8 +284,14 @@ export interface ModVersion {
   sizeBytes?: number
   date?: string
   primary?: boolean
-  /** Download needs an interactive step (e.g. Nexus free accounts); open the page instead. */
+  /** Download needs an interactive step (e.g. a click on the website); NexusForge opens its own window for it. */
   manualOnly?: boolean
+  /** Game versions this file is made for, as the source states them. */
+  gameVersions?: string[]
+  loaders?: string[]
+  dependencies?: ModDependency[]
+  /** File notes / changelog (often says which game version is needed). */
+  description?: string
 }
 
 export interface ModDetails extends ModSearchResult {
@@ -261,6 +299,9 @@ export interface ModDetails extends ModSearchResult {
   images: string[]
   versions: ModVersion[]
   tags?: string[]
+  /** Requirements of the mod as a whole (Nexus lists them per mod, not per file). */
+  requirements?: ModDependency[]
+  gameVersions?: string[]
 }
 
 export interface SourceGameBinding {
@@ -277,6 +318,8 @@ export interface SourceInfo {
   enabled: boolean
   apiKey?: 'optional' | 'required'
   hasKey?: boolean
+  /** Where the user gets a key. */
+  apiKeyUrl?: string
   homepage?: string
   /** Placeholder text for the per-game binding field (e.g. "Thunderstore community"). */
   bindingLabel?: string
@@ -304,7 +347,7 @@ export interface PluginInfo {
 // ---------------------------------------------------------------------------
 // Downloads
 
-export type DownloadState = 'queued' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled'
+export type DownloadState = 'queued' | 'waiting' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled'
 
 export interface DownloadItem {
   id: string
@@ -324,6 +367,25 @@ export interface DownloadItem {
   installedModId?: string
   error?: string
   thumbnail?: string
+  /** Shown while state is 'waiting' (e.g. "Click Slow download in the Nexus window"). */
+  hint?: string
+  /** Web page the download comes from, for downloads that need a click on the site. */
+  pageUrl?: string
+}
+
+/** The in-app site panel (Nexus download page, bot checks). */
+export interface SitePanelState {
+  open: boolean
+  /** Download (or page) id shown right now. */
+  id?: string
+  title: string
+  /** What the user has to do on the page. */
+  hint: string
+  url: string
+  loading: boolean
+  canGoBack: boolean
+  /** Every page that is waiting, shown or not. */
+  waiting: Array<{ id: string; title: string }>
 }
 
 export interface DownloadRequest {
@@ -336,7 +398,43 @@ export interface DownloadRequest {
   author?: string
   summary?: string
   thumbnail?: string
+  /** Source refs of the mods this one needs, so it is ordered after them. */
+  requires?: ModSourceRef[]
 }
+
+// ---------------------------------------------------------------------------
+// Accounts
+
+export type AccountId = 'nexus' | 'modio' | 'curseforge' | 'steam'
+
+export interface AccountInfo {
+  id: AccountId
+  name: string
+  /** What signing in unlocks. */
+  unlocks: string
+  signedIn: boolean
+  /** User name on the site. */
+  user?: string
+  avatar?: string
+  /** "Premium", "Free account", … */
+  detail?: string
+  /** A sign-in page is open in the site panel right now. */
+  busy?: boolean
+  /** Sign-in happens in the site panel (false: NexusForge asks for the login itself, e.g. Steam). */
+  web: boolean
+  registerUrl?: string
+  /** The source needs this account for anything at all (not just downloads). */
+  required: boolean
+}
+
+export interface SteamLoginRequest {
+  user: string
+  password: string
+  /** Steam Guard code (e-mail or Steam app), when Steam asked for one. */
+  code?: string
+}
+
+export type SteamLoginResponse = { ok: true; account: AccountInfo } | { ok: false; needCode?: 'email' | 'app'; message: string }
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -350,8 +448,16 @@ export interface Settings {
   autoFetchArtwork: boolean
   scanPlatforms: Record<Exclude<Platform, 'manual'>, boolean>
   customFolders: string[]
+  /** Also look for game folders on every local drive (Games folders, extra Steam libraries, launcher folders). */
+  scanAllDrives: boolean
   modStorageDir: string
   defaultStrategy: DeployStrategy
+  /** What to do with mods a download needs: ask every time, install them automatically, or never. */
+  dependencyMode: 'ask' | 'always' | 'never'
+  /** steamcmd.exe used for Steam Workshop downloads; empty = NexusForge's own copy. */
+  steamcmdPath: string
+  /** Steam account SteamCMD is signed in with (set from Accounts; the login itself is cached by SteamCMD). */
+  steamAccount: string
   logLevel: 'error' | 'warn' | 'info' | 'debug'
   sources: Record<string, { enabled: boolean; apiKey?: string }>
   feeds: FeedConfig[]

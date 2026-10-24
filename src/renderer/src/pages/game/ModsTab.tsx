@@ -3,6 +3,7 @@ import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-p
 import { motion } from 'framer-motion'
 import { Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, Rocket, Trash, Undo2, Zap } from 'lucide-react'
 import type { Game, InstalledMod } from '@shared/types'
+import { missingRequirements } from '@shared/deps'
 import { activeProfileOf, useMods } from '../../store/mods'
 import { confirm, useNav } from '../../store/ui'
 import { invoke } from '../../lib/api'
@@ -12,7 +13,17 @@ import { MenuItem, MenuSeparator, Popover, Select } from '../../components/Popov
 import { EmptyState } from '../../components/Chrome'
 import { ModSettingsModal } from '../../modals/ModSettingsModal'
 
-const SOURCE_LABEL: Record<string, string> = { nexus: 'Nexus', thunderstore: 'Thunderstore', modrinth: 'Modrinth' }
+const SOURCE_LABEL: Record<string, string> = {
+  nexus: 'Nexus',
+  thunderstore: 'Thunderstore',
+  modrinth: 'Modrinth',
+  steamworkshop: 'Workshop',
+  modio: 'mod.io',
+  curseforge: 'CurseForge',
+  moddb: 'ModDB',
+  beamng: 'BeamNG',
+  frameworks: 'Mod loader'
+}
 
 function ModThumb({ mod }: { mod: InstalledMod }) {
   const [failed, setFailed] = useState(false)
@@ -39,6 +50,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
   const q = query.trim().toLowerCase()
   const shown = q ? ordered.filter((m) => m.name.toLowerCase().includes(q) || (m.author ?? '').toLowerCase().includes(q)) : ordered
   const perMod = state?.conflicts?.perMod ?? {}
+  const enabledSet = useMemo(() => new Set(profile?.enabled ?? []), [profile?.enabled])
   const status = state?.status
 
   const onDragEnd = (r: DropResult) => {
@@ -238,6 +250,16 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                   {mod.source && <Badge className="h-4.5 text-[10px]">{SOURCE_LABEL[mod.source.sourceId] ?? mod.source.sourceId.replace(/^(feed|plugin):/, '')}</Badge>}
                                   {mod.author && <span className="truncate">by {mod.author}</span>}
                                   <span>{mod.fileCount.toLocaleString()} files</span>
+                                  {(() => {
+                                    const missing = on ? missingRequirements(mod, state.mods, enabledSet) : []
+                                    if (!missing.length) return null
+                                    const names = missing.map((x) => `${x.ref.name ?? x.ref.modId}${x.disabled ? ' (disabled)' : ''}`).join(', ')
+                                    return (
+                                      <Badge tone="warning" className="h-4.5 text-[10px]">
+                                        <span title={`Needs: ${names}`}>needs {missing.length === 1 ? (missing[0].ref.name ?? 'a mod') : `${missing.length} mods`}</span>
+                                      </Badge>
+                                    )
+                                  })()}
                                 </div>
                               </div>
                             </button>
@@ -270,7 +292,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                   <MenuItem icon={<FolderOpen />} onClick={() => (close(), void invoke('mods:openFolder', game.id, mod.id))}>
                                     Open mod folder
                                   </MenuItem>
-                                  {mod.source && /^(nexus|thunderstore|modrinth)$/.test(mod.source.sourceId) && (
+                                  {mod.source && SOURCE_LABEL[mod.source.sourceId] && (
                                     <MenuItem icon={<Compass />} onClick={() => (close(), void invoke('sources:openPage', mod.source!.sourceId, mod.source!.modId, game.id))}>
                                       Open mod page
                                     </MenuItem>

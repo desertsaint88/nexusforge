@@ -4,17 +4,20 @@ import { basename, dirname, join } from 'node:path'
 import type { DetectedGame, Game, ManualGameInput, Platform, ScanProgress, ScanResult } from '@shared/types'
 import { db, getSettings } from '../store'
 import { emit } from '../events'
-import { exists, isDir, shortId } from '../util/fs'
+import { exists, isDir, safeReaddir, shortId } from '../util/fs'
 import { scoped } from '../logger'
 import { scanSteam } from './steam'
 import { scanEpic } from './epic'
 import { scanXbox } from './xbox'
 import { scanGog } from './gog'
 import { scanCustomFolders, cleanGameName } from './custom'
+import { findGameRoots } from './drives'
+import { emulatorGameDirs, findEmulators, scanEmulatorGames, type RomDir } from './emulators'
 import { exeIcon, fetchStoreArt } from './artwork'
 import { findMainExecutable, findExecutables } from './exe-detect'
-import { findPreset } from './presets'
+import { findPreset, presetTarget } from './presets'
 import { mediaUrl } from '../media-protocol'
+import { readExeVersion } from './exe-version'
 
 const log = scoped('library')
 
@@ -41,7 +44,7 @@ function broadcast(): void {
 function defaultModding(d: { platform: Platform; platformId?: string; name: string; installDir: string }): Game['modding'] {
   const preset = findPreset(d)
   return {
-    targetDir: preset?.target ? join(d.installDir, ...preset.target.split('/')) : d.installDir,
+    targetDir: preset?.target ? presetTarget(preset.target, d.installDir) : d.installDir,
     strategy: getSettings().defaultStrategy,
     sources: { ...(preset?.sources ?? {}) }
   }
@@ -58,7 +61,7 @@ function fromDetected(d: DetectedGame): Game {
 
 function mergeDetected(existing: Game, d: DetectedGame): Game {
   const edited = new Set(existing.userEdited ?? [])
-  const next: Game = { ...existing, missing: false }
+  const next: Game = { ...existing, missing: false, emulator: d.emulator }
   if (!edited.has('name')) next.name = d.name
   next.installDir = d.installDir
   if (!edited.has('exePath')) next.exePath = d.exePath ?? existing.exePath
@@ -80,6 +83,13 @@ function mergeDetected(existing: Game, d: DetectedGame): Game {
 }
 
 let scanning: Promise<ScanResult> | undefined
+let lastDriveRoots: string[] | undefined
+
+/** Game folders found on the local drives (from the last scan, or looked up now). */
+export async function driveGameRoots(): Promise<string[]> {
+  lastDriveRoots ??= await findGameRoots()
+  return lastDriveRoots
+}
 
 export function scanLibrary(): Promise<ScanResult> {
   scanning ??= doScan().finally(() => {
@@ -121,17 +131,42 @@ async function doScan(): Promise<ScanResult> {
   )
 
   const existing = db().get('games')
+  let roots = [...settings.customFolders]
   if (settings.scanPlatforms.custom) {
     report({ platform: 'custom', status: 'scanning', found: 0 })
     try {
+      if (settings.scanAllDrives) {
+        lastDriveRoots = await findGameRoots()
+        for (const r of lastDriveRoots) if (!roots.some((x) => x.toLowerCase() === r.toLowerCase())) roots.push(r)
+      }
       const skip = new Set<string>([
         ...detected.map((g) => g.installDir.toLowerCase()),
         ...Object.values(existing).filter((g) => g.platform === 'manual').map((g) => g.installDir.toLowerCase())
       ])
-      const found = await scanCustomFolders(settings.customFolders, skip)
+      const found = await scanCustomFolders(roots, skip)
       detected.push(...found)
+      // Console games: disc images in folders that hold no PC game, and in the emulators' own game lists.
+      let consoleGames = 0
+      const emulators = await findEmulators(roots)
+      if (emulators.size) {
+        const taken = new Set([...skip, ...found.map((g) => g.installDir.toLowerCase())])
+        const romDirs: RomDir[] = []
+        for (const r of roots) {
+          for (const e of await safeReaddir(r)) {
+            const dir = join(r, e.name)
+            if (e.isDirectory() && !e.name.startsWith('.') && !taken.has(dir.toLowerCase())) romDirs.push({ dir })
+          }
+        }
+        for (const listed of await emulatorGameDirs()) {
+          romDirs.push(listed)
+          if (!roots.some((x) => x.toLowerCase() === listed.dir.toLowerCase())) roots.push(listed.dir)
+        }
+        const roms = await scanEmulatorGames(romDirs, emulators)
+        detected.push(...roms)
+        consoleGames = roms.length
+      }
       succeeded.add('custom')
-      report({ platform: 'custom', status: 'done', found: found.length })
+      report({ platform: 'custom', status: 'done', found: found.length + consoleGames })
     } catch (err) {
       log.error('custom folder scan failed', err)
       report({ platform: 'custom', status: 'error', found: 0, message: (err as Error).message })
@@ -162,7 +197,7 @@ async function doScan(): Promise<ScanResult> {
     } else if (succeeded.has(g.platform)) {
       // A custom folder that was removed from settings drops its games unless they have mods.
       const hasMods = Object.keys(db().get('mods')[g.id] ?? {}).length > 0
-      if (g.platform === 'custom' && !hasMods && !settings.customFolders.some((f) => g.installDir.toLowerCase().startsWith(f.toLowerCase()))) {
+      if (g.platform === 'custom' && !hasMods && !roots.some((f) => g.installDir.toLowerCase().startsWith(f.toLowerCase()))) {
         delete games[g.id]
         continue
       }
@@ -195,13 +230,25 @@ async function enrichArtwork(games: Game[]): Promise<void> {
   try {
     const settings = getSettings()
     let changed = false
+    // Every write re-reads the game after the await, so edits made meanwhile (favorite, name…) aren't overwritten.
     for (const g of games) {
-      const current = getGame(g.id)
-      if (!current) continue
-      if (!current.art.icon && current.exePath) {
-        const icon = await exeIcon(current.id, current.exePath)
-        if (icon) {
+      const before = getGame(g.id)
+      if (!before?.exePath) continue
+      if (!before.art.icon) {
+        const icon = await exeIcon(before.id, before.exePath)
+        const current = getGame(g.id)
+        if (icon && current) {
           current.art = { ...current.art, icon }
+          saveGame(current)
+          changed = true
+        }
+      }
+      if (before.version === undefined) {
+        // An emulated game's executable is the emulator, whose version says nothing about the game.
+        const version = before.emulator ? '' : ((await readExeVersion(before.exePath)) ?? '')
+        const current = getGame(g.id)
+        if (current && current.version === undefined) {
+          current.version = version
           saveGame(current)
           changed = true
         }
@@ -296,6 +343,7 @@ export function updateGame(id: string, patch: Partial<Pick<Game, 'name' | 'exePa
       edited.add('launch')
     }
     game.art = { ...game.art, icon: undefined }
+    game.version = undefined
   }
   if (patch.launchArgs !== undefined) game.launchArgs = patch.launchArgs.trim() || undefined
   if (patch.favorite !== undefined) game.favorite = patch.favorite
@@ -312,7 +360,7 @@ export function updateGame(id: string, patch: Partial<Pick<Game, 'name' | 'exePa
   game.userEdited = [...edited]
   saveGame(game)
   broadcast()
-  if (!game.art.icon) void enrichArtwork([game])
+  if (!game.art.icon || game.version === undefined) void enrichArtwork([game])
   return game
 }
 

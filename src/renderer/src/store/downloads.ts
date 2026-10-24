@@ -8,6 +8,7 @@ interface DownloadsState {
   load(): Promise<void>
   start(req: DownloadRequest): Promise<DownloadItem | undefined>
   cancel(id: string): Promise<void>
+  focus(id: string): Promise<void>
   retry(id: string): Promise<void>
   install(id: string, gameId: string): Promise<void>
   clear(): Promise<void>
@@ -21,7 +22,8 @@ export const useDownloads = create<DownloadsState>((set, get) => ({
   async start(req) {
     try {
       const item = await invoke('downloads:start', req)
-      toast.info(`Downloading ${item.name}`, req.gameId ? 'It will be installed automatically.' : undefined)
+      if (item.state === 'waiting') toast.info(`${item.name}: one click left`, 'Click the highlighted button in the download panel; NexusForge installs the file right after.')
+      else toast.info(`Downloading ${item.name}`, req.gameId ? 'It will be installed automatically.' : undefined)
       return item
     } catch (err) {
       toast.error('Download not started', (err as Error).message)
@@ -30,6 +32,9 @@ export const useDownloads = create<DownloadsState>((set, get) => ({
   },
   async cancel(id) {
     await invoke('downloads:cancel', id)
+  },
+  async focus(id) {
+    await invoke('downloads:focus', id)
   },
   async retry(id) {
     try {
@@ -62,4 +67,4 @@ export function subscribeDownloads(): void {
   })
 }
 
-export const isActive = (d: DownloadItem) => d.state === 'downloading' || d.state === 'installing' || d.state === 'queued'
+export const isActive = (d: DownloadItem) => d.state === 'downloading' || d.state === 'installing' || d.state === 'queued' || d.state === 'waiting'

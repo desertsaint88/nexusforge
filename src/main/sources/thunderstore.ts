@@ -1,6 +1,6 @@
-import type { ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
 import type { AdapterContext, ModSourceAdapter } from './types'
-import { normName } from './http'
+import { gameNameVariants, nameScore } from './http'
 
 const BASE = 'https://thunderstore.io'
 
@@ -49,6 +49,23 @@ interface Community {
 
 let communityCache: { at: number; list: Community[] } | undefined
 
+/** "denikson-BepInExPack_Valheim-5.4.2202" -> namespace, name, version */
+export function parseDependency(dep: string): ModDependency {
+  const parts = dep.split('-')
+  const version = parts.length >= 3 ? parts.pop()! : undefined
+  const namespace = parts.shift() ?? dep
+  const name = parts.join('-')
+  return {
+    sourceId: 'thunderstore',
+    modId: `${namespace}/${name}`,
+    versionId: version,
+    name: `${name.replace(/_/g, ' ')}${version ? ` ${version}` : ''}`,
+    required: true,
+    installable: Boolean(name),
+    url: `${BASE}/package/${namespace}/${name}/`
+  }
+}
+
 export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter {
   async function communities(): Promise<Community[]> {
     if (communityCache && Date.now() - communityCache.at < 24 * 3600_000) return communityCache.list
@@ -83,11 +100,14 @@ export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter
     bindingLabel: 'Thunderstore community',
 
     async suggestBindings(game): Promise<SourceGameBinding[]> {
-      const n = normName(game.name)
+      const variants = gameNameVariants(game.name)
       const list = await communities()
-      const exact = list.filter((c) => normName(c.name) === n || c.identifier === n)
-      const partial = list.filter((c) => !exact.includes(c) && (normName(c.name).includes(n) || (n.length > 4 && n.includes(normName(c.name)))))
-      return [...exact, ...partial].slice(0, 8).map((c) => ({ value: c.identifier, label: c.name }))
+      return list
+        .map((c) => ({ c, score: Math.max(...variants.map((v) => nameScore(v, c.name))) }))
+        .filter((x) => x.score >= 0.5)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8)
+        .map(({ c }) => ({ value: c.identifier, label: c.name }))
     },
 
     async search(query, gameId): Promise<ModSearchResult[]> {
@@ -134,11 +154,26 @@ export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter
         url: c ? `${BASE}/c/${c}/p/${namespace}/${name}/` : pkg.package_url,
         description: readme || pkg.latest.description,
         images: [],
-        tags: pkg.latest.dependencies.length ? pkg.latest.dependencies.map((d) => `Requires ${d}`) : undefined,
+        requirements: pkg.latest.dependencies.map(parseDependency),
         versions: (versions.length ? versions : [{ version_number: pkg.latest.version_number, datetime_created: pkg.latest.date_created, download_count: 0, download_url: pkg.latest.download_url }])
           .sort((a, b) => b.datetime_created.localeCompare(a.datetime_created))
-          .map((v, i) => ({ id: v.version_number, name: `${name.replace(/_/g, ' ')} ${v.version_number}`, version: v.version_number, date: v.datetime_created, primary: i === 0, fileName: `${namespace}-${name}-${v.version_number}.zip` }))
+          .map((v, i) => ({
+            id: v.version_number,
+            name: `${name.replace(/_/g, ' ')} ${v.version_number}`,
+            version: v.version_number,
+            date: v.datetime_created,
+            primary: i === 0,
+            fileName: `${namespace}-${name}-${v.version_number}.zip`,
+            dependencies: v.version_number === pkg.latest.version_number ? pkg.latest.dependencies.map(parseDependency) : undefined
+          }))
       }
+    },
+
+    async resolveDependencies(modId, versionId) {
+      const { namespace, name } = parseId(modId)
+      const path = versionId ? `${namespace}/${name}/${versionId}/` : `${namespace}/${name}/`
+      const v = await ctx.json<{ dependencies?: string[]; latest?: { dependencies: string[] } }>(`${BASE}/api/experimental/package/${path}`)
+      return (v.dependencies ?? v.latest?.dependencies ?? []).map(parseDependency)
     },
 
     async getDownloadUrl(modId, versionId) {

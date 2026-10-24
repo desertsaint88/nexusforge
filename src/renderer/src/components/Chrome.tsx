@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, CircleAlert, CircleCheck, Compass, Download, Info, Library, Minus, Settings, Square, SquareStack, TriangleAlert, X } from 'lucide-react'
+import { ArrowLeft, CircleAlert, CircleCheck, Compass, Download, Info, Library, Minus, Settings, Square, SquareStack, TriangleAlert, UserRound, X } from 'lucide-react'
 import { invoke, on } from '../lib/api'
 import { cn, PLATFORM_COLOR, PLATFORM_LABEL } from '../lib/format'
 import { useNav, useToasts, type Route } from '../store/ui'
 import { useLibrary, visibleGames } from '../store/library'
 import { isActive, useDownloads } from '../store/downloads'
+import { useAccounts } from '../store/accounts'
 import { GameIcon } from './GameArt'
 import { ProgressBar } from './ui'
 
@@ -98,6 +99,7 @@ export function Sidebar() {
   const games = useLibrary((s) => s.games)
   const running = useLibrary((s) => s.running)
   const downloads = useDownloads((s) => s.items)
+  const nexusSignedIn = useAccounts((s) => s.accounts.find((a) => a.id === 'nexus')?.signedIn ?? true)
   const active = downloads.filter(isActive)
   const visible = visibleGames(games)
   const quick = [...visible]
@@ -119,6 +121,13 @@ export function Sidebar() {
           active={is('downloads')}
           onClick={() => navigate({ name: 'downloads' })}
           badge={active.length ? <span className="accent-gradient flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white">{active.length}</span> : undefined}
+        />
+        <NavItem
+          icon={<UserRound />}
+          label="Accounts"
+          active={is('accounts')}
+          onClick={() => navigate({ name: 'accounts' })}
+          badge={nexusSignedIn ? undefined : <span className="block size-2 rounded-full bg-amber-400 shadow-[0_0_8px] shadow-amber-400/70" title="Not signed in to Nexus Mods" />}
         />
         <NavItem icon={<Settings />} label="Settings" active={is('settings')} onClick={() => navigate({ name: 'settings' })} />
       </nav>

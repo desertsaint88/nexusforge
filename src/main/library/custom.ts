@@ -3,17 +3,25 @@ import { basename, join } from 'node:path'
 import type { DetectedGame } from '@shared/types'
 import { isDir, safeReaddir } from '../util/fs'
 import { findExecutables, isExcludedExe } from './exe-detect'
+import { NON_GAME_DIR } from './drives'
 
-const SCENE_TAGS = /[-_.\s](codex|skidrow|empress|rune|tenoke|flt|plaza|cpy|reloaded|hoodlum|razor1911|prophet|darksiders|goldberg|elamigos|fitgirl|dodi|gog|repack|ankergames|steamrip|online-fix|multi\d+|x64)\b.*$/i
+const SCENE_TAGS = /[-_.\s](codex|skidrow|empress|rune|tenoke|flt|plaza|cpy|reloaded|hoodlum|razor1911|prophet|darksiders|goldberg|elamigos|fitgirl|dodi|gog|repack|ankergames|steamrip|online-fix|ofme|p2p|kaos|tinyiso|chronos|doge|multi\d+|x64)\b.*$/i
+/** ".v1.4.1.1176458", " v2026.02.09", "_Build_12345" and everything after it. */
+const VERSION_TAIL = /[\s._-](?:v|ver\.?|version[\s._-]?|build[\s._-]?)\d+(?:[._]\d+)*[a-z]?\b.*$/i
 
 /** "The.Witcher.3.Wild.Hunt-GOG [v4.04]" -> "The Witcher 3 Wild Hunt" */
 export function cleanGameName(folder: string): string {
+  // Decide on the original name whether . _ - are word separators ("Hell.Let.Loose") or part of the title
+  // ("Half-Life", "BeamNG.drive").
+  const separatorStyle = !/\s/.test(folder) && (folder.match(/[._-]/g)?.length ?? 0) >= 2
   let name = folder
     .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\((?:[^)]*(?:repack|fitgirl|dodi|v\d|build|update|edition by)[^)]*)\)/gi, ' ')
+    .replace(/\((?:[^)]*(?:repack|fitgirl|dodi|gog|v\d|build|update|edition by|\d{4}-\d{2}-\d{2})[^)]*)\)/gi, ' ')
+    .replace(/\s*\((?:19|20)\d{2}\)\s*$/, '')
+    .trim()
+    .replace(VERSION_TAIL, '')
     .replace(SCENE_TAGS, '')
-  // "Grand-Theft-Auto-V" / "The.Witcher.3" -> spaces, but keep single separators like "Half-Life" or "BeamNG.drive".
-  if (!/\s/.test(name) && (name.match(/[._-]/g)?.length ?? 0) >= 2) name = name.replace(/[._-]/g, ' ')
+  if (separatorStyle) name = name.replace(/[._-]/g, ' ')
   name = name.replace(/\s+v?\d+(\.\d+){1,3}[a-z]?\s*$/i, '').replace(/\s{2,}/g, ' ').trim()
   return name || folder
 }
@@ -61,9 +69,11 @@ export async function scanCustomFolders(roots: string[], skipDirs: Set<string>):
       continue
     }
     for (const e of await safeReaddir(root)) {
-      if (!e.isDirectory() || e.name.startsWith('.') || e.name.startsWith('$')) continue
+      if (!e.isDirectory() || e.name.startsWith('.') || e.name.startsWith('$') || NON_GAME_DIR.test(e.name)) continue
       const dir = join(root, e.name)
       if (skipDirs.has(dir.toLowerCase())) continue
+      // Steam libraries and launcher installs inside a games folder are scanned on their own.
+      if ((await safeReaddir(dir)).some((c) => c.isDirectory() && /^steamapps$/i.test(c.name))) continue
       const shallow = (await hasDirectExe(dir)) || (await safeReaddir(dir)).some((c) => c.isDirectory() && /^(bin|binaries|game|x64|win64)$/i.test(c.name))
       if (shallow) {
         add(await gameFromDir(dir))

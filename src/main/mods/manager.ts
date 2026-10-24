@@ -6,10 +6,10 @@ import { db } from '../store'
 import { paths } from '../paths'
 import { emit } from '../events'
 import { scoped } from '../logger'
-import { dirSize, exists, isDir, safeName, safeReaddir, shortId, walkFiles } from '../util/fs'
+import { dirSize, exists, isDir, renameDir, safeName, safeReaddir, shortId, walkFiles } from '../util/fs'
 import { getGame } from '../library/library'
 import { findPreset } from '../library/presets'
-import { extractArchive, isArchive } from './archive'
+import { extractArchive, isArchive, zipFolder } from './archive'
 import { applyThunderstoreLayout, detectRoot, readThunderstoreManifest } from './layout'
 import { buildPlan, conflictReport, type DeployPlan, type PlanMod } from './plan'
 import { applyDeployment, EMPTY_PLAN, readManifest } from './deploy'
@@ -87,6 +87,42 @@ export interface InstallMeta {
   summary?: string
   thumbnail?: string
   source?: ModSourceRef
+  /** Mods this one needs; it is placed after them in the load order. */
+  requires?: ModSourceRef[]
+}
+
+/** Archive name without the download id NexusForge prefixes ("d_1a2b3c4d5e6f-Car Pack.zip" -> "Car Pack.zip"). */
+function originalName(file: string): string {
+  return basename(file).replace(/^d_[0-9a-f]{6,}-/i, '')
+}
+
+/**
+ * Games that load mods as .zip files (BeamNG): the zip is kept as it is. Downloads that wrap the real mod zip(s)
+ * in another archive are unwrapped one level; a .7z/.rar holding the mod's folders is packed into a zip.
+ */
+async function stagePackedMod(input: string, dest: string): Promise<void> {
+  await fsp.mkdir(dest, { recursive: true })
+  const probe = join(dest, '.probe')
+  try {
+    await extractArchive(input, probe)
+    let dir = probe
+    for (let i = 0; i < 2; i++) {
+      const e = await safeReaddir(dir)
+      if (e.length === 1 && e[0].isDirectory()) dir = join(dir, e[0].name)
+      else break
+    }
+    const entries = (await safeReaddir(dir)).filter((e) => !(e.isFile() && /\.(txt|md|rtf|pdf|html?|url|nfo|jpe?g|png)$/i.test(e.name)))
+    const zips = entries.filter((e) => e.isFile() && /\.zip$/i.test(e.name))
+    if (zips.length && zips.length === entries.length) {
+      for (const z of zips) await fsp.rename(join(dir, z.name), join(dest, z.name))
+    } else if (/\.zip$/i.test(input)) {
+      await fsp.copyFile(input, join(dest, safeName(originalName(input))))
+    } else {
+      await zipFolder(dir, join(dest, `${safeName(originalName(input).replace(/\.[^.]+$/, ''))}.zip`))
+    }
+  } finally {
+    await fsp.rm(probe, { recursive: true, force: true })
+  }
 }
 
 export async function installMod(gameId: string, input: string, meta: InstallMeta = {}): Promise<InstalledMod> {
@@ -95,32 +131,37 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
   const stagingRoot = paths.modStaging(gameId)
   const id = shortId('m')
   const tmp = join(stagingRoot, `.installing-${id}`)
-  log.info(`installing ${input} for ${game.name}`)
+  const packed = Boolean(findPreset(game)?.keepArchive)
+  log.info(`installing ${input} for ${game.name}${packed ? ' (kept packed)' : ''}`)
   try {
     if (await isDir(input)) {
       await fsp.cp(input, tmp, { recursive: true, errorOnExist: false, force: true })
+    } else if (packed && isArchive(input)) {
+      await stagePackedMod(input, tmp)
     } else if (isArchive(input)) {
       await extractArchive(input, tmp)
     } else {
       await fsp.mkdir(tmp, { recursive: true })
-      await fsp.copyFile(input, join(tmp, basename(input)))
+      await fsp.copyFile(input, join(tmp, originalName(input)))
     }
 
     const ts = meta.source?.sourceId === 'thunderstore' ? meta.source.modId.replace('/', '-') : undefined
-    const tsManifest = await readThunderstoreManifest(tmp)
+    const tsManifest = packed ? undefined : await readThunderstoreManifest(tmp)
     let rootPath: string
-    if (ts || tsManifest) {
+    if (packed) {
+      rootPath = ''
+    } else if (ts || tsManifest) {
       rootPath = await applyThunderstoreLayout(tmp, ts ?? tsManifest?.name ?? 'plugin')
     } else {
       rootPath = await detectRoot(tmp, basename(game.modding.targetDir), findPreset(game)?.keepWrapper)
     }
 
-    const guessed = (await isDir(input)) ? { name: basename(input) } : isArchive(input) ? nameFromArchive(input) : { name: basename(input, extname(input)) }
+    const guessed = (await isDir(input)) ? { name: basename(input) } : isArchive(input) ? nameFromArchive(originalName(input)) : { name: basename(originalName(input), extname(input)) }
     const name = meta.name ?? tsManifest?.name?.replace(/_/g, ' ') ?? guessed.name
     const version = meta.version ?? tsManifest?.version_number ?? guessed.version
 
     const finalDir = join(stagingRoot, `${safeName(name)}_${id.slice(2, 8)}`)
-    await fsp.rename(tmp, finalDir)
+    await renameDir(tmp, finalDir)
     const { bytes, files } = await dirSize(join(finalDir, ...rootPath.split('/').filter(Boolean)))
     if (files === 0) throw new Error('The archive contains no files.')
 
@@ -144,7 +185,8 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
       updatedAt: Date.now(),
       sizeBytes: bytes,
       fileCount: files,
-      originalFile: (await isDir(input)) ? undefined : basename(input)
+      originalFile: (await isDir(input)) ? undefined : basename(input),
+      requires: meta.requires?.length ? meta.requires : previous?.requires
     }
     saveMod(mod)
     if (previous) {

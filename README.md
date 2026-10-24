@@ -6,6 +6,8 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
 
 **Library & launcher**
 - First-run scan of Steam (every `libraryfolders.vdf` library, playtime and last played from your Steam profile, cached artwork), Epic Games Store manifests, Xbox / Microsoft Store games (`.GamingRoot`, launched by package AUMID), GOG (registry), and your own game folders. A folder of folders is expanded once.
+- **Every drive**: "Games"-style folders at each local drive's root, Steam libraries Steam doesn't know about, and the launcher folders in Program Files are scanned without any setup. Release folder names are cleaned ("Hell.Let.Loose.Vietnam.v1.4.1-OFME" → "Hell Let Loose Vietnam").
+- **Console games**: disc images in folders without a PC game (e.g. `C:\Games\PS2`) and in PCSX2's game list start in the installed emulator (PCSX2, DuckStation, PPSSPP, Dolphin), with box art from libretro-thumbnails.
 - Manual add by `.exe` or folder, with exe detection that skips uninstallers, crash handlers and redistributables.
 - Library grid with cover art (Steam cache → Steam CDN → Steam store lookup by name → generated art), playtime, mod count, favorites, filters, sort, and a Continue Playing banner. Playtime is tracked for games NexusForge starts directly.
 
@@ -17,7 +19,10 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
 - **Conflict resolver**: groups of mods that overwrite the same files, a winner picker per file, and "prefer this mod for the whole group". Pinned choices survive reordering.
 
 **Mod sources**
-- Adapter interface (`ModSourceAdapter`) with Nexus Mods (search without a key; direct downloads with a Premium API key, otherwise the file page opens), Thunderstore and Modrinth built in.
+- Adapter interface (`ModSourceAdapter`) with Nexus Mods, Steam Workshop (SteamCMD), Thunderstore, mod.io, CurseForge, ModDB, Modrinth, the BeamNG repository and mod loaders (BepInEx, MelonLoader from GitHub) built in. Requirements are resolved recursively and installed first.
+- **Accounts**: Nexus Mods, mod.io and CurseForge sign-in happens inside the app (the site's login page in the site panel). Afterwards NexusForge reads the personal API key from the site's key page, checks it against the site's API and stores it encrypted. Pressing Download while signed out asks to sign in first. Steam: SteamCMD signs in once with name + password (+ Steam Guard); the password is never stored.
+- Downloads never leave the app: pages that need a click (Nexus "Slow download" for free accounts, bot checks) open in the in-app site panel with the button highlighted, and the file installs as soon as it lands.
+- BeamNG.drive mods stay zipped and go to BeamNG's user folder (`startup.ini` `UserPath` respected).
 - Custom JSON feeds (URL or local file) and trusted JavaScript plugins. See [docs/PLUGINS.md](docs/PLUGINS.md).
 - Download manager with progress, speed, cancel, retry, and auto-install into the chosen game.
 
@@ -35,6 +40,7 @@ npm run typecheck
 npm test             # unit tests (deploy engine, conflicts, scanners, archive layouts)
 npm run build
 npm run smoke        # end-to-end run of the built app with screenshots in .smoke/shots
+node scripts/smoke-sources.mjs   # live checks against the real mod sites (.smoke/sources/shots)
 npm run dist         # NSIS installer + portable exe in release/
 ```
 

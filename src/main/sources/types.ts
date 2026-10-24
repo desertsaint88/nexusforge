@@ -1,4 +1,4 @@
-import type { Game, ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
+import type { Game, ModDependency, ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
 
 /**
  * A mod source. Implement this to plug any mod site or feed into NexusForge.
@@ -19,12 +19,39 @@ export interface ModSourceAdapter {
   bindingLabel?: string
   /** Whether the user can (or must) enter an API key in Settings › Sources. */
   apiKey?: 'optional' | 'required'
+  /** Where to get a key, shown next to the key field. */
+  apiKeyUrl?: string
   /** Suggested values for the per-game binding; the first one is used when the user hasn't chosen. */
   suggestBindings?(game: Game): Promise<SourceGameBinding[]>
   /** Web page for a mod, used when a download needs the browser. */
   getModPageUrl?(modId: string, gameId?: string): string | undefined
+  /**
+   * Richer alternative to getDownloadUrl for downloads that are not a plain URL:
+   * a click on the website (captured by NexusForge's own browser window) or a SteamCMD job.
+   */
+  getDownload?(modId: string, versionId: string, gameId?: string): Promise<DownloadPlan>
+  /** Direct dependencies of one version of a mod. NexusForge resolves them recursively. */
+  resolveDependencies?(modId: string, versionId: string | undefined, gameId?: string): Promise<ModDependency[]>
   dispose?(): void
 }
+
+export type DownloadPlan =
+  | { kind: 'url'; url: string; fileName?: string; headers?: Record<string, string> }
+  | {
+      kind: 'browser'
+      /** Page the user downloads from; the file is captured from NexusForge's window. */
+      pageUrl: string
+      /** Session partition, so a login on the site is remembered. */
+      partition: string
+      hint: string
+      /** false: the site starts the download by itself, so the page loads in the background (default true). */
+      interactive?: boolean
+      /** Built-in page helper that highlights the button the user has to press. */
+      helper?: 'nexus' | 'moddb'
+      /** If the page leads to nxm:// links instead of a file, turn them into a download URL. */
+      resolveNxm?: (nxmUrl: string) => Promise<string>
+    }
+  | { kind: 'steamcmd'; appId: string; itemId: string; title: string }
 
 export interface HttpOptions {
   method?: 'GET' | 'POST'
@@ -40,6 +67,9 @@ export interface AdapterContext {
   binding(gameId: string | undefined): Promise<string | undefined>
   apiKey(): string | undefined
   json<T>(url: string, opts?: HttpOptions): Promise<T>
+  text(url: string, opts?: HttpOptions): Promise<string>
+  /** Loads a page in a real (hidden) browser window, for sites behind bot checks. Returns the final HTML. */
+  browserHtml(url: string, partition?: string): Promise<string>
   log: { info(...a: unknown[]): void; warn(...a: unknown[]): void; error(...a: unknown[]): void }
 }
 

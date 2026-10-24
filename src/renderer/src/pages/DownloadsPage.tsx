@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Ban, CircleCheck, CircleX, Download, FolderOpen, Inbox, PackagePlus, RotateCcw, Trash } from 'lucide-react'
+import { Ban, CircleCheck, CircleX, Download, FolderOpen, Inbox, MousePointerClick, PackagePlus, RotateCcw, Trash } from 'lucide-react'
 import type { DownloadItem } from '@shared/types'
 import { invoke } from '../lib/api'
 import { cn, formatBytes, formatSpeed, relativeTime } from '../lib/format'
@@ -13,6 +13,7 @@ import { GameIcon } from '../components/GameArt'
 
 const STATE_BADGE: Record<DownloadItem['state'], { tone: 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'; label: string }> = {
   queued: { tone: 'neutral', label: 'Queued' },
+  waiting: { tone: 'warning', label: 'Waiting for your click' },
   downloading: { tone: 'accent', label: 'Downloading' },
   installing: { tone: 'info', label: 'Installing' },
   completed: { tone: 'success', label: 'Done' },
@@ -21,7 +22,7 @@ const STATE_BADGE: Record<DownloadItem['state'], { tone: 'neutral' | 'accent' | 
 }
 
 function Row({ d }: { d: DownloadItem }) {
-  const { cancel, retry, install } = useDownloads()
+  const { cancel, retry, install, focus } = useDownloads()
   const games = visibleGames(useLibrary((s) => s.games))
   const game = games.find((g) => g.id === d.gameId)
   const navigate = useNav((s) => s.navigate)
@@ -46,6 +47,8 @@ function Row({ d }: { d: DownloadItem }) {
           )}
         </div>
         <div className="mt-1 truncate font-mono text-[11.5px] text-ink-400">{d.fileName || d.url}</div>
+        {d.state === 'waiting' && <div className="mt-1.5 text-[12.5px] leading-relaxed text-amber-200/90">{d.hint}</div>}
+        {d.hint && d.state === 'downloading' && <div className="mt-1 truncate text-[12px] text-ink-300">{d.hint}</div>}
         {(d.state === 'downloading' || d.state === 'installing' || d.state === 'queued') && (
           <div className="mt-2.5 flex items-center gap-3">
             <ProgressBar value={pct} indeterminate={d.state !== 'downloading' || !d.total} className="flex-1" />
@@ -60,7 +63,12 @@ function Row({ d }: { d: DownloadItem }) {
         {!isActive(d) && !d.error && <div className="mt-1 text-[11.5px] text-ink-500">{formatBytes(d.total || d.received)} · {relativeTime(d.finishedAt ?? d.startedAt)}</div>}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {isActive(d) && d.state === 'downloading' && (
+        {d.state === 'waiting' && (
+          <Button size="sm" variant="primary" icon={<MousePointerClick className="size-3.5" />} onClick={() => void focus(d.id)}>
+            Show page
+          </Button>
+        )}
+        {(d.state === 'downloading' || d.state === 'waiting') && (
           <Button size="sm" variant="ghost" icon={<Ban className="size-3.5" />} onClick={() => void cancel(d.id)}>
             Cancel
           </Button>

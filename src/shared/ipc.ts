@@ -1,4 +1,6 @@
 import type {
+  AccountId,
+  AccountInfo,
   AppInfo,
   ConflictReport,
   DeployProgress,
@@ -16,11 +18,15 @@ import type {
   ModSearchResult,
   PluginInfo,
   Profile,
+  ResolvedDependency,
   ScanProgress,
   ScanResult,
   Settings,
+  SitePanelState,
   SourceGameBinding,
   SourceInfo,
+  SteamLoginRequest,
+  SteamLoginResponse,
   Toast
 } from './types'
 
@@ -52,6 +58,7 @@ export interface IpcInvokeMap {
   'library:running': () => string[]
   'library:fetchArtwork': (id: string) => Game
   'library:detectExecutables': (dir: string) => string[]
+  'library:driveRoots': () => string[]
 
   'mods:list': (gameId: string) => InstalledMod[]
   'mods:installFiles': (gameId: string, paths: string[]) => InstalledMod[]
@@ -78,6 +85,8 @@ export interface IpcInvokeMap {
   'sources:search': (sourceId: string, query: string, gameId?: string) => ModSearchResult[]
   'sources:details': (sourceId: string, modId: string, gameId?: string) => ModDetails
   'sources:bindings': (sourceId: string, gameId: string) => SourceGameBinding[]
+  'sources:dependencies': (sourceId: string, modId: string, versionId: string | undefined, gameId?: string) => ResolvedDependency[]
+  'sources:latestVersion': (sourceId: string, modId: string, gameId?: string) => string
   'sources:openPage': (sourceId: string, modId: string, gameId?: string) => void
   'sources:setFeeds': (feeds: FeedConfig[]) => SourceInfo[]
   'sources:plugins': () => PluginInfo[]
@@ -88,9 +97,23 @@ export interface IpcInvokeMap {
   'downloads:list': () => DownloadItem[]
   'downloads:start': (req: DownloadRequest) => DownloadItem
   'downloads:cancel': (id: string) => void
+  'downloads:focus': (id: string) => void
   'downloads:retry': (id: string) => DownloadItem
   'downloads:install': (id: string, gameId: string) => DownloadItem
   'downloads:clear': () => DownloadItem[]
+
+  'accounts:list': () => AccountInfo[]
+  'accounts:signIn': (id: AccountId, register?: boolean) => AccountInfo
+  'accounts:signOut': (id: AccountId) => AccountInfo[]
+  'accounts:saveKey': (id: AccountId, key: string) => AccountInfo
+  'accounts:steamLogin': (req: SteamLoginRequest) => SteamLoginResponse
+
+  'sitepanel:state': () => SitePanelState
+  'sitepanel:bounds': (rect: { x: number; y: number; width: number; height: number }) => void
+  'sitepanel:show': (id: string) => void
+  'sitepanel:hide': () => void
+  'sitepanel:navigate': (action: 'back' | 'reload') => void
+  'sitepanel:cancel': () => void
 }
 
 /** Events pushed from main to renderer. */
@@ -102,6 +125,10 @@ export interface IpcEventMap {
   'deploy:progress': DeployProgress
   'mods:changed': { gameId: string }
   'downloads:update': DownloadItem
+  'sitepanel:state': SitePanelState
+  'accounts:changed': AccountInfo[]
+  /** Progress of a Steam sign-in ("Confirm the sign-in in the Steam app…"). */
+  'accounts:steamStatus': string
   'toast': Omit<Toast, 'id'>
 }
 
@@ -113,17 +140,20 @@ export const INVOKE_CHANNELS = [
   'app:info', 'app:openPath', 'app:showItem', 'app:openExternal', 'app:openLogs', 'app:pickFile', 'app:pickFiles', 'app:pickFolder',
   'settings:get', 'settings:set',
   'library:list', 'library:scan', 'library:addManual', 'library:update', 'library:remove', 'library:launch', 'library:running',
-  'library:fetchArtwork', 'library:detectExecutables',
+  'library:fetchArtwork', 'library:detectExecutables', 'library:driveRoots',
   'mods:list', 'mods:installFiles', 'mods:remove', 'mods:update', 'mods:files', 'mods:rootCandidates', 'mods:openFolder',
   'profiles:list', 'profiles:create', 'profiles:rename', 'profiles:delete', 'profiles:setActive', 'profiles:save',
   'deploy:run', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
-  'sources:list', 'sources:search', 'sources:details', 'sources:bindings', 'sources:openPage', 'sources:setFeeds', 'sources:plugins',
-  'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
-  'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:retry', 'downloads:install', 'downloads:clear'
+  'sources:list', 'sources:search', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
+  'sources:setFeeds', 'sources:plugins', 'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
+  'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:clear',
+  'accounts:list', 'accounts:signIn', 'accounts:signOut', 'accounts:saveKey', 'accounts:steamLogin',
+  'sitepanel:state', 'sitepanel:bounds', 'sitepanel:show', 'sitepanel:hide', 'sitepanel:navigate', 'sitepanel:cancel'
 ] as const satisfies readonly InvokeChannel[]
 
 export const EVENT_CHANNELS = [
-  'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'mods:changed', 'downloads:update', 'toast'
+  'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'mods:changed', 'downloads:update', 'sitepanel:state',
+  'accounts:changed', 'accounts:steamStatus', 'toast'
 ] as const satisfies readonly EventChannel[]
 
 type Async<F> = F extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : never

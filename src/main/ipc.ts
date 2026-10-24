@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import type { IpcInvokeMap, InvokeChannel } from '@shared/ipc'
-import type { Settings } from '@shared/types'
+import type { AccountId, Settings } from '@shared/types'
 import { getSettings, setSettings } from './store'
 import { logFilePath, scoped, setLogLevel } from './logger'
 import { run } from './util/exec'
@@ -10,6 +10,8 @@ import * as mods from './mods/manager'
 import * as profiles from './mods/profiles'
 import * as sources from './sources/registry'
 import * as downloads from './downloads/manager'
+import * as panel from './web/panel'
+import * as accounts from './accounts/accounts'
 
 const log = scoped('ipc')
 
@@ -104,8 +106,8 @@ export function registerIpc(rendererUrl: string): void {
   handle('settings:get', () => getSettings())
   handle('settings:set', async (_e, patch) => {
     const allowed: Array<keyof Settings> = [
-      'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'modStorageDir',
-      'defaultStrategy', 'logLevel', 'sources', 'firstRunComplete'
+      'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'scanAllDrives', 'modStorageDir',
+      'defaultStrategy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete'
     ]
     const clean: Partial<Settings> = {}
     for (const k of allowed) if (patch && k in patch) (clean as Record<string, unknown>)[k] = patch[k]
@@ -127,6 +129,7 @@ export function registerIpc(rendererUrl: string): void {
   handle('library:running', () => library.runningGames())
   handle('library:fetchArtwork', (_e, id) => library.refetchArtwork(str(id, 'game')))
   handle('library:detectExecutables', (_e, dir) => library.detectExecutables(str(dir, 'folder')))
+  handle('library:driveRoots', () => library.driveGameRoots())
 
   handle('mods:list', (_e, gameId) => mods.listMods(str(gameId, 'game')))
   handle('mods:installFiles', async (_e, gameId, files) => {
@@ -160,7 +163,9 @@ export function registerIpc(rendererUrl: string): void {
   handle('sources:search', (_e, id, q, gameId) => sources.searchSource(str(id, 'source'), String(q ?? ''), gameId || undefined))
   handle('sources:details', (_e, id, modId, gameId) => sources.sourceDetails(str(id, 'source'), str(modId, 'mod'), gameId || undefined))
   handle('sources:bindings', (_e, id, gameId) => sources.sourceBindings(str(id, 'source'), str(gameId, 'game')))
-  handle('sources:openPage', (_e, id, modId, gameId) => sources.openSourcePage(str(id, 'source'), str(modId, 'mod'), gameId || undefined))
+  handle('sources:dependencies', (_e, id, modId, versionId, gameId) => sources.resolveDependencies(str(id, 'source'), str(modId, 'mod'), versionId || undefined, gameId || undefined))
+  handle('sources:latestVersion', (_e, id, modId, gameId) => sources.latestVersionId(str(id, 'source'), str(modId, 'mod'), gameId || undefined))
+  handle('sources:openPage',(_e, id, modId, gameId) => sources.openSourcePage(str(id, 'source'), str(modId, 'mod'), gameId || undefined))
   handle('sources:setFeeds', (_e, feeds) => sources.setFeeds(Array.isArray(feeds) ? feeds : []))
   handle('sources:plugins', () => sources.listPlugins())
   handle('sources:trustPlugin', (_e, id, t) => sources.trustPlugin(str(id, 'plugin'), Boolean(t)))
@@ -175,7 +180,45 @@ export function registerIpc(rendererUrl: string): void {
     return downloads.startDownload({ ...req, sourceId: str(req.sourceId, 'source'), modId: str(req.modId, 'mod'), versionId: str(req.versionId, 'version') })
   })
   handle('downloads:cancel', (_e, id) => downloads.cancelDownload(str(id, 'download')))
+  handle('downloads:focus', (_e, id) => downloads.focusDownload(str(id, 'download')))
   handle('downloads:retry', (_e, id) => downloads.retryDownload(str(id, 'download')))
   handle('downloads:install', (_e, id, gameId) => downloads.installDownload(str(id, 'download'), str(gameId, 'game')))
   handle('downloads:clear', () => downloads.clearDownloads())
+
+  const accountId = (v: unknown): AccountId => {
+    if (v !== 'nexus' && v !== 'modio' && v !== 'curseforge' && v !== 'steam') throw new Error('Unknown account')
+    return v
+  }
+  handle('accounts:list', () => accounts.listAccounts())
+  handle('accounts:signIn', async (_e, id, register) => {
+    const info = await accounts.signIn(accountId(id), Boolean(register))
+    await sources.reloadSources()
+    return info
+  })
+  handle('accounts:signOut', async (_e, id) => {
+    const list = await accounts.signOut(accountId(id))
+    await sources.reloadSources()
+    return list
+  })
+  handle('accounts:saveKey', async (_e, id, key) => {
+    const info = await accounts.saveAccountKey(accountId(id), String(key ?? ''))
+    await sources.reloadSources()
+    return info
+  })
+  handle('accounts:steamLogin', (e, req) =>
+    accounts.signInSteam(
+      { user: String(req?.user ?? ''), password: String(req?.password ?? ''), code: req?.code ? String(req.code) : undefined },
+      (s) => e.sender.send('accounts:steamStatus', s)
+    )
+  )
+
+  handle('sitepanel:state', () => panel.panelState())
+  handle('sitepanel:bounds', (_e, r) => {
+    if (!r || ![r.x, r.y, r.width, r.height].every((n) => typeof n === 'number' && Number.isFinite(n))) throw new Error('Invalid bounds')
+    panel.setPanelBounds(r)
+  })
+  handle('sitepanel:show', (_e, id) => downloads.focusDownload(str(id, 'download')))
+  handle('sitepanel:hide', () => panel.hidePanel())
+  handle('sitepanel:navigate', (_e, action) => panel.panelNavigate(action === 'back' ? 'back' : 'reload'))
+  handle('sitepanel:cancel', () => panel.cancelShownPanel())
 }

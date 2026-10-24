@@ -1,10 +1,19 @@
 import { shell } from 'electron'
-import type { FeedConfig, ModDetails, ModSearchResult, PluginInfo, SourceGameBinding, SourceInfo } from '@shared/types'
-import type { AdapterContext, ModSourceAdapter } from './types'
-import { httpJson } from './http'
+import type { FeedConfig, ModDependency, ModDetails, ModSearchResult, PluginInfo, ResolvedDependency, SourceGameBinding, SourceInfo } from '@shared/types'
+import type { AdapterContext, DownloadPlan, ModSourceAdapter } from './types'
+import { httpJson, httpText } from './http'
 import { createThunderstoreAdapter } from './thunderstore'
 import { createNexusAdapter } from './nexus'
 import { createModrinthAdapter } from './modrinth'
+import { createSteamWorkshopAdapter } from './steamworkshop'
+import { createModioAdapter } from './modio'
+import { createCurseForgeAdapter } from './curseforge'
+import { createModDbAdapter } from './moddb'
+import { createBeamngAdapter } from './beamng'
+import { createFrameworksAdapter, frameworkDependency, frameworkPresent, FRAMEWORKS_ID } from './frameworks'
+import { browserHtml } from '../web/browser'
+import { listMods } from '../mods/manager'
+import { activeProfile } from '../mods/profiles'
 import { createFeedAdapter } from './feed'
 import { discoverPlugins, loadPlugin, pluginInfo, type DiscoveredPlugin } from './plugins'
 import { getApiKey, getSettings, hasApiKey, isSourceEnabled, setSettings } from '../store'
@@ -30,6 +39,8 @@ function contextFor(sourceId: string): AdapterContext {
     getGame,
     apiKey: () => getApiKey(sourceId),
     json: httpJson,
+    text: httpText,
+    browserHtml: (url, partition) => browserHtml(url, partition),
     log: scoped(sourceId),
     async binding(gameId) {
       if (!gameId) return undefined
@@ -75,8 +86,14 @@ export async function loadSources(): Promise<void> {
   suggestionCache.clear()
   pluginErrors.clear()
   register(createNexusAdapter(contextFor('nexus')), 'builtin')
+  register(createSteamWorkshopAdapter(contextFor('steamworkshop')), 'builtin')
   register(createThunderstoreAdapter(contextFor('thunderstore')), 'builtin')
+  register(createModioAdapter(contextFor('modio')), 'builtin')
+  register(createCurseForgeAdapter(contextFor('curseforge')), 'builtin')
+  register(createModDbAdapter(contextFor('moddb')), 'builtin')
+  register(createBeamngAdapter(contextFor('beamng')), 'builtin')
   register(createModrinthAdapter(contextFor('modrinth')), 'builtin')
+  register(createFrameworksAdapter(contextFor(FRAMEWORKS_ID)), 'builtin')
   const settings = getSettings()
   for (const feed of settings.feeds) {
     if (feed.enabled) register(createFeedAdapter(feed, contextFor(`feed:${feed.id}`)), 'feed')
@@ -106,7 +123,8 @@ export function listSources(): SourceInfo[] {
       apiKey: adapter.apiKey,
       hasKey: adapter.apiKey ? hasApiKey(adapter.id) : undefined,
       homepage: adapter.homepage,
-      bindingLabel: adapter.bindingLabel
+      bindingLabel: adapter.bindingLabel,
+      apiKeyUrl: adapter.apiKeyUrl
     })
   }
   return out
@@ -125,7 +143,6 @@ async function guarded<T>(id: string, what: string, fn: (a: ModSourceAdapter) =>
     return await fn(adapter)
   } catch (err) {
     const msg = (err as Error).message
-    if (msg === 'NEXUS_MANUAL') throw err
     log.warn(`${id} ${what} failed: ${msg}`)
     throw new Error(`${adapter.name}: ${msg}`)
   }
@@ -141,8 +158,72 @@ export async function sourceDetails(id: string, modId: string, gameId?: string):
   return { ...(await guarded(id, 'details', (a) => a.getModDetails(modId, gameId))), sourceId: id }
 }
 
-export function sourceDownloadUrl(id: string, modId: string, versionId: string, gameId?: string): Promise<string> {
-  return guarded(id, 'download', (a) => a.getDownloadUrl(modId, versionId, gameId))
+/** How to get a file: plain URL, a click in NexusForge's browser window, or a SteamCMD job. */
+export function sourceDownloadPlan(id: string, modId: string, versionId: string, gameId?: string): Promise<DownloadPlan> {
+  return guarded(id, 'download', async (a) =>
+    a.getDownload ? a.getDownload(modId, versionId, gameId) : { kind: 'url' as const, url: await a.getDownloadUrl(modId, versionId, gameId) }
+  )
+}
+
+/** Latest (primary) version of a mod, for dependencies that don't pin one. */
+export async function latestVersionId(id: string, modId: string, gameId?: string): Promise<string> {
+  const d = await sourceDetails(id, modId, gameId)
+  const v = d.versions.find((x) => x.primary) ?? d.versions[0]
+  if (!v) throw new Error(`${d.name} has no downloadable files.`)
+  return v.id
+}
+
+async function directDependencies(id: string, modId: string, versionId: string | undefined, gameId?: string): Promise<ModDependency[]> {
+  const adapter = adapterFor(id)
+  let deps: ModDependency[]
+  if (adapter.resolveDependencies) deps = await adapter.resolveDependencies(modId, versionId, gameId)
+  else {
+    const d = await adapter.getModDetails(modId, gameId)
+    deps = (versionId ? d.versions.find((v) => v.id === versionId)?.dependencies : undefined) ?? d.requirements ?? []
+  }
+  // Loaders the site only links to (BepInEx, MelonLoader) are installed by NexusForge itself.
+  return isSourceEnabled(FRAMEWORKS_ID) ? deps.map((d) => frameworkDependency(d) ?? d) : deps
+}
+
+/**
+ * Everything a mod needs, recursively, marked as installed / disabled / missing for the given game.
+ * Installed dependencies are not expanded further.
+ */
+export async function resolveDependencies(id: string, modId: string, versionId: string | undefined, gameId?: string): Promise<ResolvedDependency[]> {
+  const installed = gameId ? listMods(gameId) : []
+  const enabled = new Set(gameId ? (await activeProfile(gameId)).enabled : [])
+  const out: ResolvedDependency[] = []
+  const seen = new Set<string>([`${id}:${modId}`])
+  const queue: Array<{ source: string; mod: string; version?: string; requiredBy: string; depth: number }> = [{ source: id, mod: modId, version: versionId, requiredBy: '', depth: 0 }]
+  while (queue.length) {
+    const cur = queue.shift()!
+    let deps: ModDependency[] = []
+    try {
+      deps = await directDependencies(cur.source, cur.mod, cur.version, gameId)
+    } catch (err) {
+      log.warn(`dependencies of ${cur.source}/${cur.mod} failed: ${(err as Error).message}`)
+      continue
+    }
+    const parentName = cur.depth === 0 ? '' : out.find((o) => o.sourceId === cur.source && o.modId === cur.mod)?.name ?? cur.mod
+    for (const dep of deps) {
+      const key = `${dep.sourceId}:${dep.modId ?? dep.name}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const match = dep.modId ? installed.find((m) => m.source?.sourceId === dep.sourceId && m.source.modId === dep.modId) : undefined
+      const game = gameId ? getGame(gameId) : undefined
+      // A loader someone put into the game folder by hand counts as installed.
+      const byHand = !match && game && dep.sourceId === FRAMEWORKS_ID && dep.modId ? await frameworkPresent(game, dep.modId) : false
+      if (byHand) {
+        out.push({ ...dep, installed: true, requiredBy: parentName, note: 'already in the game folder' })
+        continue
+      }
+      out.push({ ...dep, installed: Boolean(match), disabled: match ? !enabled.has(match.id) : undefined, requiredBy: parentName })
+      if (!match && dep.installable && dep.modId && dep.sourceId && adapters.has(dep.sourceId) && cur.depth < 4) {
+        queue.push({ source: dep.sourceId, mod: dep.modId, version: dep.versionId, requiredBy: dep.name, depth: cur.depth + 1 })
+      }
+    }
+  }
+  return out
 }
 
 export async function sourceBindings(id: string, gameId: string): Promise<SourceGameBinding[]> {

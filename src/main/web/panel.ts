@@ -144,8 +144,11 @@ export async function openShownExternally(): Promise<void> {
   await shell.openExternal(url)
 }
 
-/** Removes a page from the panel and closes it. */
-export function removePanelEntry(id: string): void {
+/**
+ * Removes a page from the panel and closes it. `keepPage` only takes it off screen: a download the page started
+ * runs inside that page, and closing it would cancel the download.
+ */
+export function removePanelEntry(id: string, keepPage = false): void {
   const e = entries.get(id)
   if (!e) return
   const wasShown = shownId === id
@@ -154,7 +157,7 @@ export function removePanelEntry(id: string): void {
   panelWanted.delete(id)
   // During shutdown the view's page can already be gone.
   const wc = e.view.webContents as Electron.WebContents | undefined
-  if (wc && !wc.isDestroyed()) wc.close()
+  if (!keepPage && wc && !wc.isDestroyed()) wc.close()
   // The next page that needs the user takes its place; otherwise the panel closes.
   const next = wasShown ? [...entries.values()].find((x) => panelWanted.has(x.id)) : undefined
   if (next) attach(next)

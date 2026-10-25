@@ -323,6 +323,12 @@ export async function retryDownload(id: string): Promise<DownloadItem> {
   const item = items.get(id)
   if (!item) throw new Error('Download not found')
   if (item.state === 'downloading' || item.state === 'installing') return item
+  // Its page is still open (waiting for a click): bring it back instead of opening a second one.
+  const open = windows.get(id)
+  if (open) {
+    open.focus()
+    return item
+  }
   const req =
     requests.get(id) ??
     (item.modRef

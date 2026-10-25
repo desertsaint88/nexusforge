@@ -3,7 +3,7 @@
 // site panel; nothing opens a separate window. The user browses as themselves in a persistent session per
 // site; NexusForge only captures the file they download.
 
-import { app, session, WebContentsView, type Session, type WebContents } from 'electron'
+import { app, session, WebContentsView, type DownloadItem, type Session, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { safeName, shortId } from '../util/fs'
 import { scoped } from '../logger'
@@ -237,6 +237,8 @@ interface Capture {
   handlers: CaptureHandlers
   finished: boolean
   started: boolean
+  /** The file transfer once the page started it. It lives inside the page, so the page stays open until it ends. */
+  download?: DownloadItem
 }
 
 const captures = new Map<number, Capture>()
@@ -245,7 +247,7 @@ const hooked = new WeakSet<Session>()
 function captureFor(wc: WebContents | undefined | null, s: Session): Capture | undefined {
   if (wc && captures.has(wc.id)) return captures.get(wc.id)
   // Downloads started from a frame or service worker belong to the most recent open capture of that session.
-  return [...captures.values()].filter((c) => !c.finished && !c.wc.isDestroyed() && c.wc.session === s).pop()
+  return [...captures.values()].filter((c) => !c.finished && !c.started && !c.wc.isDestroyed() && c.wc.session === s).pop()
 }
 
 function hookSession(s: Session, partition: string): void {
@@ -254,29 +256,54 @@ function hookSession(s: Session, partition: string): void {
   s.on('will-download', (_event, item, wc) => {
     const capture = captureFor(wc, s)
     if (!capture) return
+    // A second file from the same page (some sites start a mirror too) is not ours to keep.
+    if (capture.download) {
+      item.cancel()
+      return
+    }
     const fileName = safeName(item.getFilename() || 'download.zip')
     const path = join(capture.saveDir, `${capture.id}-${fileName}`)
     item.setSavePath(path)
     capture.started = true
+    capture.download = item
     capture.handlers.onStart(fileName, item.getTotalBytes())
     let lastBytes = 0
     let lastTime = Date.now()
-    item.on('updated', () => {
+    let speed = 0
+    let resumes = 0
+    item.on('updated', (_e, state) => {
+      if (state === 'interrupted') {
+        // Dropped connections (Wi-Fi, CDN hiccups) pick up where they stopped instead of failing the download.
+        if (item.canResume() && resumes < 6) {
+          resumes++
+          log.warn(`download of ${fileName} interrupted, resuming (${resumes})`)
+          setTimeout(() => item.getState() === 'interrupted' && item.resume(), 1500 * resumes)
+        }
+        return
+      }
       const now = Date.now()
       const received = item.getReceivedBytes()
-      const speed = ((received - lastBytes) / Math.max(1, now - lastTime)) * 1000
-      lastBytes = received
-      lastTime = now
+      if (now - lastTime >= 400) {
+        // Smoothed, so the speed shown doesn't jump around with every chunk.
+        const current = ((received - lastBytes) / (now - lastTime)) * 1000
+        speed = speed ? speed * 0.6 + current * 0.4 : current
+        lastBytes = received
+        lastTime = now
+      }
       capture.handlers.onProgress(received, item.getTotalBytes(), speed)
     })
     item.once('done', (_e, state) => {
       capture.finished = true
       if (state === 'completed') capture.handlers.onDone(path)
-      else capture.handlers.onError(state === 'cancelled' ? 'Download cancelled' : 'Download interrupted')
-      setTimeout(() => removePanelEntry(capture.id), 400)
+      else capture.handlers.onError(state === 'cancelled' ? 'Download cancelled' : 'The download was interrupted (connection lost). Retry to start it again.')
+      // Only now may the page close: the transfer ran inside it.
+      setTimeout(() => {
+        removePanelEntry(capture.id)
+        if (!capture.wc.isDestroyed()) capture.wc.close()
+      }, 400)
     })
-    // The file is on its way; the page isn't needed on screen anymore.
-    if (isPanelShown(capture.id)) setTimeout(() => removePanelEntry(capture.id), 900)
+    // The file is on its way: the page leaves the panel but stays open in the background until the file is complete.
+    setTimeout(() => removePanelEntry(capture.id, true), isPanelShown(capture.id) ? 900 : 0)
   })
   // Chromium asks before handing unknown schemes (nxm://) to the OS; take them ourselves instead.
   s.setPermissionRequestHandler((wc, permission, callback, details) => {
@@ -311,7 +338,7 @@ export function openCapture(opts: {
   hookSession(s, opts.partition)
   const view = newView(opts.partition)
   const wc = view.webContents
-  const capture: Capture = { id: opts.id, wc, saveDir: opts.saveDir, handlers: opts.handlers, finished: false, started: false }
+  const capture: Capture & { view: WebContentsView } = { id: opts.id, wc, view, saveDir: opts.saveDir, handlers: opts.handlers, finished: false, started: false }
   captures.set(wc.id, capture)
   keepInView(wc, (url) => opts.handlers.onNxm?.(url))
   watchBotCheck(wc, opts.partition, opts.id)
@@ -324,11 +351,21 @@ export function openCapture(opts: {
   }
   wc.once('destroyed', () => {
     cleanup()
-    if (!capture.finished && !closedByUs) {
+    // Once the file transfer has started, its own 'done' event reports how it ended.
+    if (!capture.finished && !closedByUs && !capture.started) {
       capture.finished = true
       opts.handlers.onError('The download page was closed before the download started.')
     }
   })
+  /** Stops the page and a transfer it started. */
+  const stop = () => {
+    capture.finished = true
+    closedByUs = true
+    const d = capture.download
+    if (d && d.getState() !== 'completed' && d.getState() !== 'cancelled') d.cancel()
+    removePanelEntry(opts.id)
+    if (!wc.isDestroyed()) wc.close()
+  }
 
   const needsUser = (hint: string, show: boolean) => {
     if (capture.started || capture.finished) return
@@ -371,10 +408,8 @@ export function openCapture(opts: {
     view,
     show: opts.interactive,
     onCancel: () => {
-      capture.finished = true
-      closedByUs = true
+      stop()
       opts.handlers.onError('Download cancelled')
-      removePanelEntry(opts.id)
     }
   })
   void wc.loadURL(opts.pageUrl)
@@ -383,11 +418,7 @@ export function openCapture(opts: {
     focus: () => {
       showPanelEntry(opts.id)
     },
-    close: () => {
-      capture.finished = true
-      closedByUs = true
-      removePanelEntry(opts.id)
-    }
+    close: stop
   }
 }
 

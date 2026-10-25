@@ -5,7 +5,7 @@ import type { Game, Profile } from '@shared/types'
 import { useMods } from '../../store/mods'
 import { confirm } from '../../store/ui'
 import { cn, relativeTime } from '../../lib/format'
-import { Badge, Button, Card, Input } from '../../components/ui'
+import { Badge, Button, Card, IconButton, Input } from '../../components/ui'
 import { Modal } from '../../components/Modal'
 
 export function ProfilesTab({ game }: { game: Game }) {
@@ -62,29 +62,29 @@ export function ProfilesTab({ game }: { game: Game }) {
                   {deployedHere && <Badge tone="success">Deployed</Badge>}
                   {Object.keys(p.fileOverrides).length > 0 && <Badge>{Object.keys(p.fileOverrides).length} pinned files</Badge>}
                 </div>
-                <div className="mt-4 flex gap-1.5">
+                {/* One main action plus compact icon actions, so the row fits the narrowest card. */}
+                <div className="mt-4 flex items-center gap-1">
                   <Button size="sm" variant={active ? 'secondary' : 'primary'} disabled={active} icon={<Check className="size-3.5" />} onClick={() => void switchProfile(game.id, p.id)}>
                     {active ? 'Active' : 'Activate'}
                   </Button>
-                  <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => open('rename', p)}>
-                    Rename
-                  </Button>
-                  <Button size="sm" variant="ghost" icon={<Copy className="size-3.5" />} onClick={() => open('clone', p)}>
-                    Duplicate
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="ml-auto px-2 text-rose-300 hover:text-rose-200"
+                  <div className="flex-1" />
+                  <IconButton label="Rename" onClick={() => open('rename', p)}>
+                    <Pencil className="size-3.5" />
+                  </IconButton>
+                  <IconButton label="Duplicate" onClick={() => open('clone', p)}>
+                    <Copy className="size-3.5" />
+                  </IconButton>
+                  <IconButton
+                    label={state.profiles.length <= 1 ? 'The last profile cannot be deleted' : 'Delete profile'}
+                    className="text-rose-300/80 hover:bg-rose-500/10 hover:text-rose-200"
                     disabled={state.profiles.length <= 1}
-                    aria-label="Delete profile"
                     onClick={async () => {
                       if (await confirm({ title: `Delete "${p.name}"?`, message: 'The profile file is deleted. Installed mods are not affected.', confirmLabel: 'Delete', danger: true }))
                         void deleteProfile(game.id, p.id)
                     }}
                   >
                     <Trash className="size-3.5" />
-                  </Button>
+                  </IconButton>
                 </div>
               </Card>
             </motion.div>

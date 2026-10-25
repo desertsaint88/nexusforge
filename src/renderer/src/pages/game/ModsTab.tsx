@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { motion } from 'framer-motion'
-import { Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, Rocket, Trash, Undo2, Zap } from 'lucide-react'
+import { ArrowUp, ArrowUpCircle, Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, RefreshCw, Rocket, Trash, Undo2, Zap } from 'lucide-react'
 import type { Game, InstalledMod } from '@shared/types'
 import { missingRequirements } from '@shared/deps'
 import { activeProfileOf, useMods } from '../../store/mods'
@@ -42,12 +42,28 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
   const state = useMods((s) => s.byGame[game.id])
   const deploying = useMods((s) => s.deploying[game.id])
   const installing = useMods((s) => s.installing[game.id] ?? 0)
-  const { toggle, reorder, install, remove, deploy, purge, switchProfile, setAll } = useMods()
+  const { toggle, reorder, install, remove, deploy, purge, switchProfile, setAll, checkUpdates, applyUpdates } = useMods()
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<InstalledMod | undefined>()
 
   const profile = activeProfileOf(state)
   const modsById = useMemo(() => new Map((state?.mods ?? []).map((m) => [m.id, m])), [state?.mods])
+
+  // Updates: checked once when the tab opens (the main process keeps results for 30 minutes).
+  const allUpdates = useMods((s) => s.updates[game.id])
+  const checking = useMods((s) => Boolean(s.checkingUpdates[game.id]))
+  const updatingMap = useMods((s) => s.updating)
+  const hasSourced = (state?.mods ?? []).some((m) => m.source?.sourceId && !m.source.sourceId.startsWith('feed:'))
+  useEffect(() => {
+    if (state?.loaded && hasSourced) void checkUpdates(game.id)
+  }, [game.id, state?.loaded, hasSourced, checkUpdates])
+  // An update that already got installed (same file id now) is no longer offered.
+  const updates = useMemo(
+    () => (allUpdates ?? []).filter((u) => modsById.has(u.modId) && modsById.get(u.modId)!.source?.versionId !== u.latestVersionId),
+    [allUpdates, modsById]
+  )
+  const updateFor = useMemo(() => new Map(updates.map((u) => [u.modId, u])), [updates])
+  const pendingUpdates = updates.filter((u) => !updatingMap[`${game.id}:${u.modId}`])
   const ordered = useMemo(() => (profile?.order ?? []).map((id) => modsById.get(id)).filter(Boolean) as InstalledMod[], [profile?.order, modsById])
   const q = query.trim().toLowerCase()
   const shown = q ? ordered.filter((m) => m.name.toLowerCase().includes(q) || (m.author ?? '').toLowerCase().includes(q)) : ordered
@@ -97,6 +113,16 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
         />
         <SearchInput value={query} onChange={setQuery} placeholder="Filter mods" className="w-60" />
         <div className="flex-1" />
+        {pendingUpdates.length > 0 && (
+          <Button
+            icon={<ArrowUpCircle className="size-4" />}
+            className="border-[color-mix(in_oklab,var(--nf-accent)_40%,transparent)] text-ink-100"
+            onClick={() => void applyUpdates(game.id, pendingUpdates)}
+            title={pendingUpdates.map((u) => `${u.name}: ${u.currentVersion ? `v${u.currentVersion} → ` : ''}${u.latestVersion ? `v${u.latestVersion}` : u.latestName}`).join('\n')}
+          >
+            Update {pendingUpdates.length === 1 ? '1 mod' : `all (${pendingUpdates.length})`}
+          </Button>
+        )}
         <Button icon={<Compass className="size-4" />} onClick={() => navigate({ name: 'browse', gameId: game.id })}>
           Browse
         </Button>
@@ -129,6 +155,11 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
               <MenuItem icon={<PowerOff />} onClick={() => (close(), void setAll(game.id, false))}>
                 Disable all mods
               </MenuItem>
+              {hasSourced && (
+                <MenuItem icon={<RefreshCw className={cn(checking && 'animate-spin')} />} onClick={() => (close(), void checkUpdates(game.id, true))}>
+                  {checking ? 'Checking for updates…' : 'Check for updates'}
+                </MenuItem>
+              )}
               <MenuSeparator />
               <MenuItem icon={<FolderOpen />} onClick={() => (close(), void invoke('mods:openFolder', game.id))}>
                 Open mod storage
@@ -249,6 +280,27 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                 <div className="flex items-center gap-2">
                                   <span className="truncate text-[14px] font-semibold text-ink-100">{mod.name}</span>
                                   {mod.version && <span className="shrink-0 font-mono text-[11px] text-ink-400">v{mod.version}</span>}
+                                  {(() => {
+                                    const u = updateFor.get(mod.id)
+                                    if (!u) return null
+                                    if (updatingMap[`${game.id}:${mod.id}`]) return <Badge tone="info" className="h-4.5 shrink-0 text-[10px]">updating…</Badge>
+                                    return (
+                                      <span
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          void applyUpdates(game.id, [u])
+                                        }}
+                                        onKeyDown={(e) => e.key === 'Enter' && (e.stopPropagation(), void applyUpdates(game.id, [u]))}
+                                        title={`Update to ${u.latestName}${u.date ? ` (${new Date(u.date).toLocaleDateString()})` : ''}`}
+                                        className="inline-flex h-4.5 shrink-0 cursor-pointer items-center gap-1 rounded-md border border-[color-mix(in_oklab,var(--nf-accent)_40%,transparent)] bg-[color-mix(in_oklab,var(--nf-accent)_16%,transparent)] px-1.5 text-[10px] font-semibold text-ink-100 transition-colors hover:bg-[color-mix(in_oklab,var(--nf-accent)_28%,transparent)]"
+                                      >
+                                        <ArrowUp className="size-2.5" />
+                                        {u.latestVersion ? `v${u.latestVersion}` : 'update'}
+                                      </span>
+                                    )
+                                  })()}
                                 </div>
                                 <div className="mt-0.5 flex items-center gap-2 truncate text-[12px] text-ink-400">
                                   {mod.source && <Badge className="h-4.5 text-[10px]">{SOURCE_LABEL[mod.source.sourceId] ?? mod.source.sourceId.replace(/^(feed|plugin):/, '')}</Badge>}

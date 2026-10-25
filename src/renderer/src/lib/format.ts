@@ -47,6 +47,14 @@ export function formatSpeed(bps: number): string {
   return `${formatBytes(bps)}/s`
 }
 
+/** Time left: "45 s", "3 min 20 s", "1 h 05 min". */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds))
+  if (s < 60) return `${s} s`
+  if (s < 3600) return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`
+  return `${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} min`
+}
+
 /** Deterministic pair of hues for generated artwork. */
 export function nameHues(name: string): [number, number] {
   let h = 2166136261

@@ -89,6 +89,8 @@ export function createModioAdapter(ctx: AdapterContext): ModSourceAdapter {
     sorts: ['relevance', 'endorsed', 'downloads', 'trending', 'newest', 'updated'],
     sortLabels: { endorsed: 'Highest rated', downloads: 'Most downloaded', trending: 'Popular', newest: 'Recently added', updated: 'Last updated' },
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       // Without a key the game lookup fails too; say what's actually missing.
       key()
@@ -104,7 +106,7 @@ export function createModioAdapter(ctx: AdapterContext): ModSourceAdapter {
         newest: '-date_live',
         updated: '-date_updated'
       }
-      const params: Record<string, string> = { _limit: '48', _sort: SORT[opts?.sort ?? (query.trim() ? 'relevance' : 'downloads')] }
+      const params: Record<string, string> = { _limit: '48', _offset: String((opts?.page ?? 0) * 48), _sort: SORT[opts?.sort ?? (query.trim() ? 'relevance' : 'downloads')] }
       if (query.trim()) params._q = query.trim()
       const res = await get<{ data: MioMod[] }>(`/games/${g}/mods`, params)
       return res.data.map(toResult)

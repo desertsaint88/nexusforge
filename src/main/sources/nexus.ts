@@ -157,16 +157,18 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
       updated: 'Last updated'
     },
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const d = await domain(gameId)
       const q = query.trim()
       const sort = opts?.sort ?? (q ? 'relevance' : 'endorsed')
       const nodes = (
         await gql<{ mods: { nodes: GqlMod[] } }>(
-          `query($f: ModsFilter, $s: [ModsSort!]){ mods(filter: $f, sort: $s, count: 48, viewUserBlockedContent: false) { nodes {
+          `query($f: ModsFilter, $s: [ModsSort!], $o: Int){ mods(filter: $f, sort: $s, offset: $o, count: 48, viewUserBlockedContent: false) { nodes {
             modId name summary author version downloads endorsements thumbnailUrl pictureUrl createdAt updatedAt uploader { name } game { id domainName }
           } } }`,
-          nexusListing(d, q, sort)
+          { ...nexusListing(d, q, sort), o: (opts?.page ?? 0) * 48 }
         )
       ).mods.nodes
       return nodes.map((m) => ({
@@ -212,6 +214,8 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
         sizeBytes: f.sizeInBytes ? Number(f.sizeInBytes) : undefined,
         date: new Date(f.date * 1000).toISOString(),
         primary: f.category === 'MAIN',
+        superseded: f.category === 'OLD_VERSION',
+        channel: f.category === 'OLD_VERSION' ? undefined : f.category,
         manualOnly: !ctx.apiKey(),
         description: [f.category !== 'MAIN' ? `${f.category.replace(/_/g, ' ').toLowerCase()} file` : '', toPlainText(f.description)].filter(Boolean).join(' · ') || undefined
       }))

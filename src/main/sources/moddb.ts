@@ -63,6 +63,8 @@ export function createModDbAdapter(ctx: AdapterContext): ModSourceAdapter {
     sorts: ['relevance', 'endorsed', 'downloads', 'trending', 'newest', 'updated'],
     sortLabels: { endorsed: 'Rating', downloads: 'Downloads', trending: 'Popular Today', newest: 'Added', updated: 'Updated' },
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const slug = await ctx.binding(gameId)
       if (!slug) throw new Error(gameId ? 'This game is not on ModDB, or choose it in the game settings.' : 'Pick a game to search ModDB.')
@@ -83,7 +85,9 @@ export function createModDbAdapter(ctx: AdapterContext): ModSourceAdapter {
         params.set('kw', q)
       }
       if (sort) params.set('sort', sort)
-      const html = await page(`/games/${slug}/mods?${params}`)
+      const n = (opts?.page ?? 0) + 1
+      // Past the last page ModDB shows its last page again; Browse stops when a page brings nothing new.
+      const html = await page(`/games/${slug}/mods${n > 1 ? `/page/${n}` : ''}?${params}`)
       return parseRows(html, /^\/mods\/[^/]+$/).map((r) => ({
         id: r.path.split('/')[2],
         sourceId: 'moddb',

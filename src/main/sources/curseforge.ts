@@ -101,13 +101,15 @@ export function createCurseForgeAdapter(ctx: AdapterContext): ModSourceAdapter {
     sorts: ['relevance', 'endorsed', 'downloads', 'trending', 'newest', 'updated'],
     sortLabels: { endorsed: 'Rating', downloads: 'Total Downloads', trending: 'Popularity', newest: 'Creation Date', updated: 'Last Updated' },
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const g = await ctx.binding(gameId)
       if (!g) throw new Error(gameId ? 'This game is not on CurseForge, or choose it in the game settings.' : 'Pick a game to search CurseForge.')
       // CurseForge sort fields: 1 featured, 2 popularity (recent downloads), 3 last updated, 6 total downloads, 11 released, 12 rating.
       const FIELD: Record<ModSort, number> = { relevance: 1, endorsed: 12, downloads: 6, downloads_recent: 2, trending: 2, newest: 11, updated: 3 }
       const field = FIELD[opts?.sort ?? (query.trim() ? 'relevance' : 'downloads')]
-      const res = await get<{ data: CfMod[] }>(`/mods/search?gameId=${g}&searchFilter=${encodeURIComponent(query.trim())}&sortField=${field}&sortOrder=desc&pageSize=48`)
+      const res = await get<{ data: CfMod[] }>(`/mods/search?gameId=${g}&searchFilter=${encodeURIComponent(query.trim())}&sortField=${field}&sortOrder=desc&pageSize=48&index=${(opts?.page ?? 0) * 48}`)
       return res.data.map(toResult)
     },
 

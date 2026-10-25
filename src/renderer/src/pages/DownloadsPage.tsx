@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Ban, CircleCheck, CircleX, Download, FolderOpen, Inbox, MousePointerClick, PackagePlus, RotateCcw, Trash } from 'lucide-react'
+import { Ban, CircleCheck, CircleX, Download, FolderOpen, Inbox, MousePointerClick, PackagePlus, RotateCcw, Trash, X } from 'lucide-react'
 import type { DownloadItem } from '@shared/types'
 import { invoke } from '../lib/api'
-import { cn, formatBytes, formatSpeed, relativeTime } from '../lib/format'
+import { cn, formatBytes, formatDuration, formatSpeed, relativeTime } from '../lib/format'
 import { isActive, useDownloads } from '../store/downloads'
 import { useLibrary, visibleGames } from '../store/library'
 import { useNav } from '../store/ui'
@@ -21,8 +22,14 @@ const STATE_BADGE: Record<DownloadItem['state'], { tone: 'neutral' | 'accent' | 
   cancelled: { tone: 'neutral', label: 'Cancelled' }
 }
 
+function Thumb({ src }: { src?: string }) {
+  const [failed, setFailed] = useState(false)
+  if (src && !failed) return <img src={src} alt="" onError={() => setFailed(true)} className="size-full object-cover" draggable={false} />
+  return <Download className="m-3.5 size-5 text-ink-400" />
+}
+
 function Row({ d }: { d: DownloadItem }) {
-  const { cancel, retry, install, focus } = useDownloads()
+  const { cancel, retry, install, focus, remove } = useDownloads()
   const games = visibleGames(useLibrary((s) => s.games))
   const game = games.find((g) => g.id === d.gameId)
   const navigate = useNav((s) => s.navigate)
@@ -32,7 +39,7 @@ function Row({ d }: { d: DownloadItem }) {
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -20 }} className="glass flex items-center gap-4 rounded-2xl px-5 py-4">
       <div className="relative size-12 shrink-0 overflow-hidden rounded-xl bg-white/[0.05]">
-        {d.thumbnail ? <img src={d.thumbnail} alt="" className="size-full object-cover" draggable={false} /> : <Download className="m-3.5 size-5 text-ink-400" />}
+        <Thumb src={d.thumbnail} />
         {d.state === 'completed' && <CircleCheck className="absolute -right-0.5 -bottom-0.5 size-4.5 rounded-full bg-ink-900 text-emerald-400" />}
         {d.state === 'failed' && <CircleX className="absolute -right-0.5 -bottom-0.5 size-4.5 rounded-full bg-ink-900 text-rose-400" />}
       </div>
@@ -55,7 +62,7 @@ function Row({ d }: { d: DownloadItem }) {
             <span className="w-48 shrink-0 text-right text-[11.5px] text-ink-300 tabular-nums">
               {d.state === 'installing'
                 ? 'Extracting…'
-                : `${formatBytes(d.received)}${d.total ? ` / ${formatBytes(d.total)}` : ''}${d.speed ? ` · ${formatSpeed(d.speed)}` : ''}${eta !== undefined ? ` · ${Math.ceil(eta)} s` : ''}`}
+                : `${formatBytes(d.received)}${d.total ? ` / ${formatBytes(d.total)}` : ''}${d.speed ? ` · ${formatSpeed(d.speed)}` : ''}${eta !== undefined ? ` · ${formatDuration(eta)} left` : ''}`}
             </span>
           </div>
         )}
@@ -100,8 +107,13 @@ function Row({ d }: { d: DownloadItem }) {
           </Popover>
         )}
         {d.filePath && (
-          <Button size="sm" variant="ghost" className="px-2" aria-label="Show file" onClick={() => void invoke('app:showItem', d.filePath!)}>
+          <Button size="sm" variant="ghost" className="px-2" aria-label="Show file" title="Show file" onClick={() => void invoke('app:showItem', d.filePath!)}>
             <FolderOpen className="size-3.5" />
+          </Button>
+        )}
+        {!isActive(d) && (
+          <Button size="sm" variant="ghost" className="px-2 text-ink-400 hover:text-ink-100" aria-label="Remove from list" title="Remove from list (deletes the downloaded archive; installed mods stay)" onClick={() => void remove(d.id)}>
+            <X className="size-3.5" />
           </Button>
         )}
       </div>

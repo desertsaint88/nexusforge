@@ -40,6 +40,8 @@ export function storeQueries(name: string): string[] {
     .replace(/\s+-\s+/g, ': ')
     .trim()
   add(base)
+  // Executable and folder names glue words and numbers together ("Cyberpunk2077", "WatchDogs2").
+  add(base.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2'))
   for (const [re, long] of ABBREVIATIONS) if (re.test(base)) add(base.replace(re, long))
   for (const q of [...out]) if (TEST_BUILD.test(q)) add(q.replace(TEST_BUILD, ''))
   for (const q of [...out]) add(q.replace(/:/g, ''))

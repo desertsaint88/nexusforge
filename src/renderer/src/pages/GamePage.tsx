@@ -177,15 +177,16 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
 function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game; running: boolean; onLaunch(): void; onFavorite(): void; onSettings(): void }) {
   const modInfo = useLibrary((s) => s.detected[game.id])
   return (
-    <div className="relative h-[340px] overflow-hidden">
+    // Shorter on short windows, so the mod list starts above the fold.
+    <div className="relative h-[clamp(250px,44vh,360px)] overflow-hidden">
       <motion.div initial={{ scale: 1.08, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} className="absolute inset-0">
         <HeroArt game={game} />
       </motion.div>
       <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/55 to-ink-950/10" />
       <div className="absolute inset-0 bg-gradient-to-r from-ink-950/80 via-transparent to-transparent" />
-      <div className="relative flex h-full flex-col justify-end px-8 pb-12">
+      <div className="relative flex h-full flex-col justify-end px-8 pb-10 [@media(min-height:860px)]:pb-12">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, type: 'spring', stiffness: 200, damping: 24 }}>
-          <div className="mb-4 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2 [@media(min-height:860px)]:mb-4">
             <PlatformBadge platform={game.platform} />
             {game.sizeBytes ? (
               <Badge className="bg-black/40 backdrop-blur-md">
@@ -208,7 +209,7 @@ function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game;
             {game.missing && <Badge tone="danger">Install folder missing</Badge>}
           </div>
           <GameLogo game={game} />
-          <div className="mt-6 flex items-center gap-2">
+          <div className="mt-4 flex items-center gap-2 [@media(min-height:860px)]:mt-6">
             <PlayButton size="lg" className="min-w-[170px]" onClick={onLaunch} disabled={running || game.missing} label={running ? 'Running' : 'Play'} />
             <IconButton label={game.favorite ? 'Unfavorite' : 'Favorite'} onClick={onFavorite} className={cn('size-12 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md', game.favorite && 'text-amber-300')}>
               <Star className={cn('size-5', game.favorite && 'fill-current')} />

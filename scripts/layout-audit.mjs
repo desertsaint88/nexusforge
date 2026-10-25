@@ -90,9 +90,9 @@ await run('accounts')
 await nav('Settings')
 await run('settings')
 for (const t of ['Library', 'Mods', 'Sources & plugins', 'Advanced']) {
-  const b = page.getByRole('button', { name: t, exact: true })
-  if ((await b.count()) > 1) {
-    await b.last().click()
+  const b = page.locator('main').getByRole('button', { name: t, exact: true })
+  if ((await b.count()) > 0) {
+    await b.first().click()
     await run(`settings-${t.replace(/\W+/g, '-').toLowerCase()}`)
   }
 }

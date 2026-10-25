@@ -1,7 +1,35 @@
 import { create } from 'zustand'
 import type { AppInfo, Settings } from '@shared/types'
-import { invoke } from '../lib/api'
+import { invoke, on } from '../lib/api'
 import { toast } from './ui'
+
+const SCALE_STEPS = [0.75, 0.8, 0.85, 0.9, 1, 1.1, 1.25, 1.35, 1.5]
+
+/** Ctrl + / Ctrl − / Ctrl 0: interface size, like a browser's zoom. Settings changed in main (Ctrl + wheel) come back as an event. */
+export function subscribeAppSettings(): () => void {
+  const offEvent = on('settings:changed', (settings) => {
+    applyTheme(settings)
+    useApp.setState({ settings })
+  })
+  const onKey = (e: KeyboardEvent) => {
+    if (!e.ctrlKey || e.altKey || e.metaKey) return
+    const s = useApp.getState().settings
+    if (!s) return
+    const cur = s.uiScale ?? 1
+    let next: number | undefined
+    if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') next = SCALE_STEPS.find((x) => x > cur + 0.001) ?? SCALE_STEPS.at(-1)
+    else if (e.key === '-' || e.code === 'NumpadSubtract') next = [...SCALE_STEPS].reverse().find((x) => x < cur - 0.001) ?? SCALE_STEPS[0]
+    else if (e.key === '0' || e.code === 'Numpad0') next = 1
+    if (next === undefined) return
+    e.preventDefault()
+    if (next !== cur) void useApp.getState().update({ uiScale: next })
+  }
+  window.addEventListener('keydown', onKey)
+  return () => {
+    offEvent()
+    window.removeEventListener('keydown', onKey)
+  }
+}
 
 interface AppState {
   settings?: Settings

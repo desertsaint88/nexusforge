@@ -55,10 +55,12 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
     // Modrinth has no ratings; its closest order is follows.
     sortLabels: { endorsed: 'Follow count', downloads: 'Download count', newest: 'Recently published', updated: 'Recently updated' },
 
+    paged: true,
+
     async search(query, _gameId, opts): Promise<ModSearchResult[]> {
       const INDEX: Partial<Record<ModSort, string>> = { relevance: 'relevance', endorsed: 'follows', downloads: 'downloads', newest: 'newest', updated: 'updated' }
       const index = INDEX[opts?.sort ?? (query ? 'relevance' : 'downloads')] ?? 'downloads'
-      const res = await ctx.json<{ hits: Hit[] }>(`${API}/search?query=${encodeURIComponent(query)}&limit=40&index=${index}`)
+      const res = await ctx.json<{ hits: Hit[] }>(`${API}/search?query=${encodeURIComponent(query)}&limit=40&offset=${(opts?.page ?? 0) * 40}&index=${index}`)
       return res.hits.map((h) => ({
         id: h.project_id,
         sourceId: 'modrinth',

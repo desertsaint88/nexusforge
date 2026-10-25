@@ -11,6 +11,7 @@ interface DownloadsState {
   focus(id: string): Promise<void>
   retry(id: string): Promise<void>
   install(id: string, gameId: string): Promise<void>
+  remove(id: string): Promise<void>
   clear(): Promise<void>
 }
 
@@ -48,6 +49,13 @@ export const useDownloads = create<DownloadsState>((set, get) => ({
       await invoke('downloads:install', id, gameId)
     } catch (err) {
       toast.error('Install failed', (err as Error).message)
+    }
+  },
+  async remove(id) {
+    try {
+      set({ items: await invoke('downloads:remove', id) })
+    } catch (err) {
+      toast.error('Could not remove', (err as Error).message)
     }
   },
   async clear() {

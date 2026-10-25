@@ -19,6 +19,7 @@ import type {
   ModSearchOptions,
   ModSearchResponse,
   ModSearchResult,
+  ModUpdate,
   PluginInfo,
   Profile,
   ResolvedDependency,
@@ -76,6 +77,8 @@ export interface IpcInvokeMap {
   'mods:detectedAll': () => Record<string, GameModInfo>
   /** Scans one game (or all) for installed mods again. */
   'mods:rescanInstalled': (gameId?: string) => Record<string, GameModInfo>
+  /** Newer files for mods installed from a source (cached 30 min unless force). */
+  'mods:checkUpdates': (gameId: string, force?: boolean) => ModUpdate[]
 
   'profiles:list': (gameId: string) => { profiles: Profile[]; activeId: string }
   'profiles:create': (gameId: string, name: string, cloneFrom?: string) => Profile
@@ -111,6 +114,7 @@ export interface IpcInvokeMap {
   'downloads:focus': (id: string) => void
   'downloads:retry': (id: string) => DownloadItem
   'downloads:install': (id: string, gameId: string) => DownloadItem
+  'downloads:remove': (id: string) => DownloadItem[]
   'downloads:clear': () => DownloadItem[]
 
   'accounts:list': () => AccountInfo[]
@@ -148,6 +152,8 @@ export interface IpcEventMap {
   /** Progress of a Steam sign-in ("Confirm the sign-in in the Steam app…"). */
   'accounts:steamStatus': string
   'toast': Omit<Toast, 'id'>
+  /** Settings changed outside the renderer (Ctrl + mouse wheel interface size). */
+  'settings:changed': Settings
 }
 
 export type InvokeChannel = keyof IpcInvokeMap
@@ -160,19 +166,19 @@ export const INVOKE_CHANNELS = [
   'library:list', 'library:scan', 'library:addManual', 'library:update', 'library:remove', 'library:launch', 'library:running',
   'library:fetchArtwork', 'library:detectExecutables', 'library:driveRoots',
   'mods:list', 'mods:installFiles', 'mods:remove', 'mods:update', 'mods:files', 'mods:rootCandidates', 'mods:openFolder',
-  'mods:detected', 'mods:detectedAll', 'mods:rescanInstalled',
+  'mods:detected', 'mods:detectedAll', 'mods:rescanInstalled', 'mods:checkUpdates',
   'profiles:list', 'profiles:create', 'profiles:rename', 'profiles:delete', 'profiles:setActive', 'profiles:save',
   'deploy:run', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
   'sources:list', 'sources:search', 'sources:query', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
   'sources:setFeeds', 'sources:plugins', 'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
-  'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:clear',
+  'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:remove', 'downloads:clear',
   'accounts:list', 'accounts:signIn', 'accounts:signOut', 'accounts:saveKey', 'accounts:browserKey', 'accounts:cancelBrowserKey', 'accounts:steamLogin',
   'sitepanel:state', 'sitepanel:bounds', 'sitepanel:show', 'sitepanel:hide', 'sitepanel:navigate', 'sitepanel:cancel', 'sitepanel:external'
 ] as const satisfies readonly InvokeChannel[]
 
 export const EVENT_CHANNELS = [
   'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'mods:changed', 'mods:detected', 'downloads:update', 'sitepanel:state',
-  'accounts:changed', 'accounts:steamStatus', 'toast'
+  'accounts:changed', 'accounts:steamStatus', 'toast', 'settings:changed'
 ] as const satisfies readonly EventChannel[]
 
 type Async<F> = F extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : never

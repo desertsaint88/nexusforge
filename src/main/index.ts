@@ -5,7 +5,7 @@ import { getSettings, runOnce, setSettings } from './store'
 import { registerIpc } from './ipc'
 import { createMainWindow, rendererUrl } from './window'
 import { loadSources } from './sources/registry'
-import { refreshArtwork, scanLibrary } from './library/library'
+import { refreshArtwork, refreshGluedNames, scanLibrary } from './library/library'
 import { rescanGames } from './mods/detect'
 import { clearCloudflareCookies } from './web/browser'
 import { NEXUS_PARTITION } from './sources/nexus'
@@ -29,6 +29,7 @@ async function startupWork(): Promise<void> {
     await refreshArtwork().catch((err) => logger.warn('artwork refresh failed', err))
   }
   if (settings.scanOnStartup) await rescanGames().catch((err) => logger.error('startup mod scan failed', err))
+  if (settings.autoFetchArtwork) await runOnce('store-names-glued', refreshGluedNames).catch(() => {})
 }
 
 // Lets tests and portable setups keep all data in a separate folder.

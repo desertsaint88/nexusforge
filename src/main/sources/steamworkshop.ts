@@ -111,11 +111,14 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
       updated: 'Last Updated'
     },
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const app = await appId(gameId)
       const q = query.trim()
       const sort = opts?.sort ?? (q ? 'relevance' : 'downloads')
-      const key = `${app}|${q.toLowerCase()}|${sort}`
+      const page = opts?.page ?? 0
+      const key = `${app}|${q.toLowerCase()}|${sort}|${page}`
       const hit = searchCache.get(key)
       if (hit && Date.now() - hit.at < 3 * 60_000) return hit.results
       // Steam's "Most popular" (trend) over a window: a week for trending, a month for recent downloads, all time otherwise.
@@ -127,7 +130,7 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
         : sort === 'trending' ? ['trend', 7]
         : sort === 'newest' ? ['mostrecent', -1]
         : ['lastupdated', -1]
-      const url = `https://steamcommunity.com/workshop/browse/?appid=${app}&searchtext=${encodeURIComponent(q)}&browsesort=${browsesort}&section=readytouseitems&days=${days}&numperpage=30`
+      const url = `https://steamcommunity.com/workshop/browse/?appid=${app}&searchtext=${encodeURIComponent(q)}&browsesort=${browsesort}&section=readytouseitems&days=${days}&numperpage=30&p=${page + 1}`
       const html = await ctx.text(url)
       if (/too many requests/i.test(html)) throw new Error('Steam is rate limiting Workshop searches. Wait a minute and try again.')
       const ids = workshopBrowseIds(html)

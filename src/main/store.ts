@@ -36,6 +36,7 @@ function defaultSettings(): StoredSettings {
   return {
     accent: 'graphite',
     reduceMotion: false,
+    uiScale: 1,
     minimizeOnLaunch: false,
     autoFetchArtwork: true,
     scanPlatforms: { steam: true, epic: true, xbox: true, gog: true, custom: true },

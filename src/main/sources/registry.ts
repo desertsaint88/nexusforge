@@ -140,7 +140,8 @@ export function listSources(): SourceInfo[] {
       apiKeyUrl: adapter.apiKeyUrl,
       sorts: adapter.sorts,
       sortLabels: adapter.sortLabels,
-      querySorts: adapter.querySorts
+      querySorts: adapter.querySorts,
+      paged: adapter.paged
     })
   }
   return out
@@ -180,9 +181,12 @@ export async function querySource(id: string, query: string, gameId?: string, op
   const sort: ModSort = opts.sort ?? (query.trim() ? 'relevance' : 'endorsed')
   const offered = (query.trim() && adapter.querySorts) || adapter.sorts
   const native = sort === 'relevance' || (offered?.includes(sort) ?? false)
-  const raw = await guarded(id, 'search', (a) => a.search(query, gameId, native ? { sort } : {}))
+  // Further pages only exist for the site's own orders; a locally sorted list has no "next page".
+  const page = Math.max(0, Math.floor(opts.page ?? 0))
+  if (page && !(native && adapter.paged)) return { results: [], sort, approximate: !native || undefined, more: false }
+  const raw = await guarded(id, 'search', (a) => a.search(query, gameId, native ? { sort, page } : {}))
   const results = raw.map((r) => ({ ...r, sourceId: id }))
-  return native ? { results, sort } : { results: sortResults(results, sort), sort, approximate: true }
+  return native ? { results, sort, more: Boolean(adapter.paged && results.length) } : { results: sortResults(results, sort), sort, approximate: true, more: false }
 }
 
 export async function sourceDetails(id: string, modId: string, gameId?: string): Promise<ModDetails> {

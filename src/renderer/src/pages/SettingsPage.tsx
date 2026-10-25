@@ -20,12 +20,15 @@ const ACCENTS: Array<{ value: AccentName; label: string; a: string; b: string }>
   { value: 'ember', label: 'Ember', a: '#c08a66', b: '#a56c6c' }
 ]
 
+const UI_SCALES = [0.85, 0.9, 1, 1.1, 1.25]
+
 function Row({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-6 border-b border-white/[0.05] py-4 last:border-b-0">
       <div className="min-w-0">
         <div className="text-[13.5px] font-medium text-ink-100">{title}</div>
-        {description && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-400">{description}</div>}
+        {/* Long paths in descriptions wrap instead of running under the controls on the right. */}
+        {description && <div className="mt-0.5 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] text-ink-400">{description}</div>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -61,6 +64,25 @@ function General({ s, update }: { s: Settings; update(p: Partial<Settings>): voi
               />
             ))}
           </div>
+        </Row>
+        <Row
+          title="Interface size"
+          description={
+            <>
+              Makes text, buttons and pictures bigger or smaller (useful on a TV or a small window). Also <span className="font-mono text-ink-300">Ctrl +</span> /{' '}
+              <span className="font-mono text-ink-300">Ctrl −</span> / <span className="font-mono text-ink-300">Ctrl 0</span> or Ctrl + mouse wheel.
+            </>
+          }
+        >
+          <Segmented<string>
+            size="sm"
+            value={String(UI_SCALES.includes(s.uiScale ?? 1) ? (s.uiScale ?? 1) : 'custom')}
+            onChange={(v) => v !== 'custom' && update({ uiScale: Number(v) })}
+            options={[
+              ...UI_SCALES.map((v) => ({ value: String(v), label: `${Math.round(v * 100)}%` })),
+              ...(UI_SCALES.includes(s.uiScale ?? 1) ? [] : [{ value: 'custom', label: `${Math.round((s.uiScale ?? 1) * 100)}%` }])
+            ]}
+          />
         </Row>
         <Row title="Reduce motion" description="Turns off most animations.">
           <Toggle checked={s.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />

@@ -13,6 +13,8 @@ import * as downloads from './downloads/manager'
 import * as panel from './web/panel'
 import * as accounts from './accounts/accounts'
 import * as detect from './mods/detect'
+import * as updates from './mods/updates'
+import { applyUiScale } from './window'
 
 const log = scoped('ipc')
 
@@ -111,12 +113,13 @@ export function registerIpc(rendererUrl: string): void {
   handle('settings:set', async (_e, patch) => {
     const allowed: Array<keyof Settings> = [
       'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'scanAllDrives', 'scanOnStartup', 'modStorageDir',
-      'defaultStrategy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete'
+      'defaultStrategy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete', 'uiScale'
     ]
     const clean: Partial<Settings> = {}
     for (const k of allowed) if (patch && k in patch) (clean as Record<string, unknown>)[k] = patch[k]
     const next = setSettings(clean)
     if (clean.logLevel) setLogLevel(clean.logLevel)
+    if (clean.uiScale !== undefined) applyUiScale()
     if (clean.sources) await sources.reloadSources()
     return next
   })
@@ -145,7 +148,11 @@ export function registerIpc(rendererUrl: string): void {
     for (const f of files ?? []) out.push(await mods.installMod(str(gameId, 'game'), str(f, 'file')))
     return out
   })
-  handle('mods:remove', (_e, gameId, modId) => mods.removeMod(str(gameId, 'game'), str(modId, 'mod')))
+  handle('mods:remove', async (_e, gameId, modId) => {
+    await mods.removeMod(str(gameId, 'game'), str(modId, 'mod'))
+    updates.invalidateUpdates(gameId, modId)
+  })
+  handle('mods:checkUpdates', (_e, gameId, force) => updates.checkUpdates(str(gameId, 'game'), Boolean(force)))
   handle('mods:update', (_e, gameId, modId, patch) => mods.updateMod(str(gameId, 'game'), str(modId, 'mod'), patch ?? {}))
   handle('mods:files', (_e, gameId, modId) => mods.listModFiles(str(gameId, 'game'), str(modId, 'mod')))
   handle('mods:rootCandidates', (_e, gameId, modId) => mods.rootCandidates(str(gameId, 'game'), str(modId, 'mod')))
@@ -178,7 +185,12 @@ export function registerIpc(rendererUrl: string): void {
 
   handle('sources:list', () => sources.listSources())
   handle('sources:search', (_e, id, q, gameId) => sources.searchSource(str(id, 'source'), String(q ?? ''), gameId || undefined))
-  handle('sources:query', (_e, id, q, gameId, opts) => sources.querySource(str(id, 'source'), String(q ?? ''), gameId || undefined, { sort: modSort(opts?.sort) }))
+  handle('sources:query', (_e, id, q, gameId, opts) =>
+    sources.querySource(str(id, 'source'), String(q ?? ''), gameId || undefined, {
+      sort: modSort(opts?.sort),
+      page: Number.isInteger(opts?.page) && opts!.page! >= 0 && opts!.page! < 200 ? opts!.page : undefined
+    })
+  )
   handle('sources:details', (_e, id, modId, gameId) => sources.sourceDetails(str(id, 'source'), str(modId, 'mod'), gameId || undefined))
   handle('sources:bindings', (_e, id, gameId) => sources.sourceBindings(str(id, 'source'), str(gameId, 'game')))
   handle('sources:dependencies', (_e, id, modId, versionId, gameId) => sources.resolveDependencies(str(id, 'source'), str(modId, 'mod'), versionId || undefined, gameId || undefined))
@@ -201,6 +213,7 @@ export function registerIpc(rendererUrl: string): void {
   handle('downloads:focus', (_e, id) => downloads.focusDownload(str(id, 'download')))
   handle('downloads:retry', (_e, id) => downloads.retryDownload(str(id, 'download')))
   handle('downloads:install', (_e, id, gameId) => downloads.installDownload(str(id, 'download'), str(gameId, 'game')))
+  handle('downloads:remove', (_e, id) => downloads.removeDownload(str(id, 'download')))
   handle('downloads:clear', () => downloads.clearDownloads())
 
   const accountId = (v: unknown): AccountId => {
@@ -237,9 +250,11 @@ export function registerIpc(rendererUrl: string): void {
   )
 
   handle('sitepanel:state', () => panel.panelState())
-  handle('sitepanel:bounds', (_e, r) => {
+  handle('sitepanel:bounds', (e, r) => {
     if (!r || ![r.x, r.y, r.width, r.height].every((n) => typeof n === 'number' && Number.isFinite(n))) throw new Error('Invalid bounds')
-    panel.setPanelBounds(r)
+    // The renderer measures in CSS pixels; with a changed interface size those differ from window pixels.
+    const z = e.sender.getZoomFactor() || 1
+    panel.setPanelBounds({ x: r.x * z, y: r.y * z, width: r.width * z, height: r.height * z })
   })
   handle('sitepanel:show', (_e, id) => downloads.focusDownload(str(id, 'download')))
   handle('sitepanel:hide', () => panel.hidePanel())

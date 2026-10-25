@@ -114,11 +114,13 @@ export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter
     sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
     sortLabels: { endorsed: 'Top rated', downloads: 'Most downloaded', newest: 'Newest', updated: 'Last updated' },
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const c = await community(gameId)
       const ORDER: Partial<Record<ModSort, string>> = { relevance: 'most-downloaded', endorsed: 'top-rated', downloads: 'most-downloaded', newest: 'newest', updated: 'last-updated' }
       const ordering = ORDER[opts?.sort ?? (query ? 'relevance' : 'endorsed')] ?? 'top-rated'
-      const url = `${BASE}/api/cyberstorm/listing/${encodeURIComponent(c)}/?q=${encodeURIComponent(query)}&ordering=${ordering}&page_size=48`
+      const url = `${BASE}/api/cyberstorm/listing/${encodeURIComponent(c)}/?q=${encodeURIComponent(query)}&ordering=${ordering}&page_size=48&page=${(opts?.page ?? 0) + 1}`
       const res = await ctx.json<{ results: ListingItem[] }>(url)
       return res.results
         .filter((r) => !r.is_nsfw && !r.is_deprecated)

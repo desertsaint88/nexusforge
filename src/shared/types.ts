@@ -321,6 +321,8 @@ export type ModSort = 'relevance' | 'endorsed' | 'downloads' | 'downloads_recent
 
 export interface ModSearchOptions {
   sort?: ModSort
+  /** 0-based page of the site's list ("Load more"); only sources marked `paged` support it. */
+  page?: number
 }
 
 export interface ModSearchResponse {
@@ -328,6 +330,26 @@ export interface ModSearchResponse {
   sort: ModSort
   /** The source can't order by this itself; NexusForge sorted the results it got. */
   approximate?: boolean
+  /** The site has more results on further pages. */
+  more?: boolean
+}
+
+/** A newer file for a mod installed through NexusForge. */
+export interface ModUpdate {
+  /** Installed mod id. */
+  modId: string
+  name: string
+  sourceId: string
+  /** The mod's id on its source. */
+  sourceModId: string
+  currentVersion?: string
+  latestVersionId: string
+  latestVersion?: string
+  /** Name of the newer file on the site. */
+  latestName: string
+  date?: string
+  sizeBytes?: number
+  thumbnail?: string
 }
 
 /** Another mod (or external tool) a mod needs. */
@@ -370,6 +392,10 @@ export interface ModVersion {
   dependencies?: ModDependency[]
   /** File notes / changelog (often says which game version is needed). */
   description?: string
+  /** The site marks this file as replaced by a newer one (Nexus "Old versions"). */
+  superseded?: boolean
+  /** Files of one channel replace each other (Nexus file categories: main, optional, â€¦); none = one channel. */
+  channel?: string
 }
 
 export interface ModDetails extends ModSearchResult {
@@ -407,6 +433,8 @@ export interface SourceInfo {
   sortLabels?: Partial<Record<ModSort, string>>
   /** Orders available when searching for a name, if fewer than `sorts`. */
   querySorts?: ModSort[]
+  /** Lists continue on further pages ("Load more"). */
+  paged?: boolean
   error?: string
 }
 
@@ -530,6 +558,8 @@ export type AccentName = 'violet' | 'ember' | 'cyan' | 'graphite' | 'emerald'
 export interface Settings {
   accent: AccentName
   reduceMotion: boolean
+  /** Interface size (zoom), 0.75–1.5; Ctrl + / Ctrl - / Ctrl 0 and Ctrl + mouse wheel change it. */
+  uiScale: number
   minimizeOnLaunch: boolean
   autoFetchArtwork: boolean
   scanPlatforms: Record<Exclude<Platform, 'manual'>, boolean>

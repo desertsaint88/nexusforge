@@ -19,6 +19,8 @@ import { addonSlug, extractGma } from '../steam/gma'
 import { extractLzma } from '../mods/archive'
 import { getGame } from '../library/library'
 import { findPreset } from '../library/presets'
+import { invalidateUpdates } from '../mods/updates'
+import { notifyInBackground, setDownloadProgress } from '../window'
 
 const log = scoped('downloads')
 
@@ -43,9 +45,31 @@ function persist(): void {
   db().set('downloads', list)
 }
 
+const lastEmit = new Map<string, number>()
+let taskbarTimer: NodeJS.Timeout | undefined
+
+/** Overall progress of running downloads on the taskbar button (cleared when nothing runs). */
+function refreshTaskbar(): void {
+  if (taskbarTimer) return
+  taskbarTimer = setTimeout(() => {
+    taskbarTimer = undefined
+    const active = [...items.values()].filter((d) => d.state === 'downloading' || d.state === 'installing' || d.state === 'waiting')
+    if (!active.length) return setDownloadProgress(-1)
+    const known = active.filter((d) => d.state === 'downloading' && d.total > 0)
+    const total = known.reduce((a, d) => a + d.total, 0)
+    setDownloadProgress(known.length === active.length && total ? known.reduce((a, d) => a + d.received, 0) / total : 2, active.some((d) => d.state === 'waiting'))
+  }, 300)
+}
+
 function update(item: DownloadItem, patch: Partial<DownloadItem>, save = false): void {
   Object.assign(item, patch)
+  // Progress ticks are sent at most 5 times a second per download; state changes always go out at once.
+  const progressOnly = Object.keys(patch).every((k) => k === 'received' || k === 'speed' || k === 'total')
+  const now = Date.now()
+  if (progressOnly && !save && now - (lastEmit.get(item.id) ?? 0) < 200) return
+  lastEmit.set(item.id, now)
   emit('downloads:update', { ...item })
+  refreshTaskbar()
   if (save) persist()
 }
 
@@ -292,7 +316,9 @@ async function installDownloaded(item: DownloadItem, gameId: string, req?: Downl
       requires: req?.requires
     })
     update(item, { state: 'completed', installedModId: mod.id, finishedAt: Date.now() }, true)
+    invalidateUpdates(gameId, mod.id)
     toast('success', `Installed ${mod.name}`, 'Deploy to apply it to the game.')
+    notifyInBackground(`Installed ${mod.name}`, `${getGame(gameId)?.name ?? 'Game'}: deploy in NexusForge to apply it.`)
   } catch (err) {
     update(item, { state: 'failed', error: `Install failed: ${(err as Error).message}`, finishedAt: Date.now() }, true)
     toast('error', `Couldn't install ${item.name}`, (err as Error).message)
@@ -350,6 +376,19 @@ export async function installDownload(id: string, gameId: string): Promise<Downl
   if (!item) throw new Error('Download not found')
   await installDownloaded(item, gameId, requests.get(id))
   return item
+}
+
+/** Removes one finished entry and the archive it downloaded (installed mods keep their own copy). */
+export async function removeDownload(id: string): Promise<DownloadItem[]> {
+  ensureLoaded()
+  const item = items.get(id)
+  if (item && !(item.state === 'downloading' || item.state === 'installing' || item.state === 'queued' || item.state === 'waiting')) {
+    if (item.filePath && item.filePath.startsWith(paths.downloads())) await fsp.rm(item.filePath, { recursive: true, force: true }).catch(() => {})
+    items.delete(id)
+    requests.delete(id)
+    persist()
+  }
+  return listDownloads()
 }
 
 /** Removes finished entries and the archives they downloaded. */

@@ -20,6 +20,8 @@ export interface ModSourceAdapter {
   sortLabels?: Partial<Record<ModSort, string>>
   /** Orders the site's search can produce, when that's fewer than `sorts` (default: all of `sorts`). */
   querySorts?: ModSort[]
+  /** `search` honours `opts.page` (0-based) for the site's further pages (an empty page ends the list). */
+  paged?: boolean
   description?: string
   homepage?: string
   /** Shown as the label of the per-game binding field ("Thunderstore community"). */

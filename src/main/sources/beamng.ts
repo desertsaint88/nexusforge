@@ -121,14 +121,20 @@ export function createBeamngAdapter(ctx: AdapterContext): ModSourceAdapter {
     // The site's search only orders by relevance or date.
     querySorts: ['relevance', 'updated'],
 
+    paged: true,
+
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       await requireBeamng(gameId)
       const q = query.trim()
       const sort = opts?.sort ?? (q ? 'relevance' : 'downloads')
+      const page = (opts?.page ?? 0) + 1
       if (!q) {
         const ORDER: Partial<Record<ModSort, string>> = { relevance: 'download_count', endorsed: 'rating_weighted', downloads: 'download_count', newest: 'resource_date', updated: 'last_update' }
-        return parseResourceList(await ctx.text(`${BASE}resources/?order=${ORDER[sort] ?? 'download_count'}`))
+        // Past the last page the forum shows the last page again; Browse stops when a page brings nothing new.
+        return parseResourceList(await ctx.text(`${BASE}resources/?order=${ORDER[sort] ?? 'download_count'}${page > 1 ? `&page=${page}` : ''}`))
       }
+      // Search result pages are tied to a search id; the first page is all NexusForge shows.
+      if (page > 1) return []
       const html = await ctx.text(`${BASE}search/search?keywords=${encodeURIComponent(q)}&type=resource_update&order=${sort === 'updated' ? 'date' : 'relevance'}`)
       if (/No results found/i.test(html)) return []
       return parseSearchResults(html)

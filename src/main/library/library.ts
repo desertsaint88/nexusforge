@@ -302,6 +302,29 @@ function applyArt(game: Game, found: NonNullable<Awaited<ReturnType<typeof fetch
   }
 }
 
+/**
+ * One more store lookup for games named like their executable ("Cyberpunk2077"): store search now also tries
+ * the spaced-out name, which finds the title and its artwork.
+ */
+export async function refreshGluedNames(): Promise<void> {
+  for (const g of listGames()) {
+    const edited = g.userEdited ?? []
+    if (g.storeName || g.platform === 'steam' || g.emulator || g.customArt?.capsule || edited.includes('art') || edited.includes('name')) continue
+    if (!/[a-z][A-Z]|[A-Za-z]\d|\d[A-Za-z]/.test(g.name.replace(/\s/g, ' '))) continue
+    try {
+      const found = await fetchStoreArt(g)
+      const current = getGame(g.id)
+      if (!found?.match || !current) continue
+      applyArt(current, found)
+      saveGame(current)
+      broadcast()
+      log.info(`store match for "${g.name}": ${current.name}`)
+    } catch (err) {
+      log.warn(`store lookup for "${g.name}" failed: ${(err as Error).message}`)
+    }
+  }
+}
+
 export async function refetchArtwork(id: string): Promise<Game> {
   const game = requireGame(id)
   const found = await fetchStoreArt(game)

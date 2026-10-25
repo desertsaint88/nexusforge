@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowDownWideNarrow, CircleAlert, CircleCheck, Compass, Download, Gamepad2, KeyRound, LogIn, Settings, ThumbsUp, Clock, Info } from 'lucide-react'
+import { ArrowDownWideNarrow, ChevronsDown, CircleAlert, CircleCheck, Compass, Download, Gamepad2, KeyRound, LogIn, Settings, ThumbsUp, Clock, Info } from 'lucide-react'
 import { accountForSource, ensureSignedIn } from '../store/accounts'
 import type { InstalledMod, ModSearchResult, ModSort, SourceGameBinding, SourceInfo } from '@shared/types'
 import { SORT_LABEL } from '@shared/sort'
@@ -8,7 +8,7 @@ import { installedIndex, isInstalled } from '@shared/installed'
 import { invoke, on } from '../lib/api'
 import { cn, formatCount, relativeTime } from '../lib/format'
 import { useLibrary, visibleGames } from '../store/library'
-import { useNav } from '../store/ui'
+import { toast, useNav } from '../store/ui'
 import { Badge, Button, SearchInput, Spinner } from '../components/ui'
 import { Select } from '../components/Popover'
 import { EmptyState } from '../components/Chrome'
@@ -135,12 +135,37 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const chosenBinding = sourceId ? game?.modding.sources[sourceId] : undefined
   const effectiveBinding = chosenBinding ?? bindings?.[0]?.value
 
+  // "Load more": the site's next pages, appended; a page that brings nothing new ends the list.
+  const [page, setPage] = useState(0)
+  const [more, setMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const loadMore = async () => {
+    if (!sourceId || loadingMore) return
+    const mySeq = seq.current
+    setLoadingMore(true)
+    try {
+      const r = await invoke('sources:query', sourceId, query, gameId, { sort, page: page + 1 })
+      if (mySeq !== seq.current) return
+      const have = new Set((results ?? []).map((x) => x.id))
+      const fresh = r.results.filter((x) => !have.has(x.id))
+      setResults([...(results ?? []), ...fresh])
+      setPage(page + 1)
+      setMore(Boolean(r.more) && fresh.length > 0)
+    } catch (err) {
+      toast.error('Could not load more', (err as Error).message)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
   // Debounced search; stale responses are dropped.
   useEffect(() => {
     if (!sourceId) return
     const mySeq = ++seq.current
     setLoading(true)
     setError(undefined)
+    setPage(0)
+    setMore(false)
     const t = setTimeout(
       () => {
         invoke('sources:query', sourceId, query, gameId, { sort })
@@ -148,6 +173,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
             if (mySeq !== seq.current) return
             setResults(r.results)
             setApproximate(Boolean(r.approximate))
+            setMore(Boolean(r.more))
           })
           .catch((err: Error) => {
             if (mySeq !== seq.current) return
@@ -290,11 +316,21 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
           ))}
         </div>
       ) : shownResults && shownResults.length ? (
-        <div className={cn('grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4 transition-opacity', loading && 'opacity-60')}>
-          {shownResults.map((r, i) => (
-            <ResultCard key={`${r.sourceId}:${r.id}`} mod={r} index={i} installed={isInstalled(index, r)} onOpen={() => setOpen(r)} />
-          ))}
-        </div>
+        <>
+          <div className={cn('grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4 transition-opacity', loading && 'opacity-60')}>
+            {shownResults.map((r, i) => (
+              <ResultCard key={`${r.sourceId}:${r.id}`} mod={r} index={i % 48} installed={isInstalled(index, r)} onOpen={() => setOpen(r)} />
+            ))}
+          </div>
+          {more && !installedOnly && !loading && (
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <Button icon={<ChevronsDown className="size-4" />} loading={loadingMore} onClick={() => void loadMore()} className="min-w-[200px]">
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+              <span className="text-[11.5px] text-ink-500">{results?.length ?? 0} mods shown, in {source?.name ?? 'the site'}'s order</span>
+            </div>
+          )}
+        </>
       ) : results && installedOnly && results.length ? (
         <EmptyState icon={<CircleCheck />} title="None of these are installed" message={`None of the mods in this list are installed in ${game?.name ?? 'this game'} yet.`}>
           <Button onClick={() => setInstalledOnly(false)}>Show all</Button>

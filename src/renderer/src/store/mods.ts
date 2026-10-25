@@ -1,7 +1,9 @@
 import { create } from 'zustand'
-import type { ConflictReport, DeployProgress, DeployReport, DeployStatus, InstalledMod, LinkCapabilities, Profile } from '@shared/types'
+import type { ConflictReport, DeployProgress, DeployReport, DeployStatus, InstalledMod, LinkCapabilities, ModUpdate, Profile } from '@shared/types'
 import { invoke, on } from '../lib/api'
 import { toast } from './ui'
+import { useDownloads } from './downloads'
+import { ensureSignedIn } from './accounts'
 
 export interface GameMods {
   mods: InstalledMod[]
@@ -18,6 +20,13 @@ interface ModsState {
   deploying: Record<string, DeployProgress | 'starting' | undefined>
   installing: Record<string, number>
   lastReport: Record<string, DeployReport | undefined>
+  /** Newer files for installed mods, per game (undefined = not checked yet). */
+  updates: Record<string, ModUpdate[] | undefined>
+  checkingUpdates: Record<string, boolean>
+  /** Mods whose update download was started (hidden from the list until the check runs again). */
+  updating: Record<string, true>
+  checkUpdates(gameId: string, force?: boolean): Promise<void>
+  applyUpdates(gameId: string, updates: ModUpdate[]): Promise<void>
   load(gameId: string): Promise<void>
   refreshMeta(gameId: string): Promise<void>
   probe(gameId: string): Promise<void>
@@ -55,6 +64,43 @@ export const useMods = create<ModsState>((set, get) => {
     deploying: {},
     installing: {},
     lastReport: {},
+    updates: {},
+    checkingUpdates: {},
+    updating: {},
+
+    async checkUpdates(gameId, force) {
+      if (get().checkingUpdates[gameId]) return
+      set({ checkingUpdates: { ...get().checkingUpdates, [gameId]: true } })
+      try {
+        const list = await invoke('mods:checkUpdates', gameId, force)
+        const updating = { ...get().updating }
+        // A finished update no longer shows up in a fresh check; forget that it was running.
+        if (force) for (const k of Object.keys(updating)) if (k.startsWith(`${gameId}:`) && !list.some((u) => `${gameId}:${u.modId}` === k)) delete updating[k]
+        set({ updates: { ...get().updates, [gameId]: list }, updating })
+        if (force) toast.info(list.length ? `${list.length} update${list.length === 1 ? '' : 's'} available` : 'All mods are up to date', list.length ? list.map((u) => u.name).slice(0, 4).join(', ') : undefined)
+      } catch (err) {
+        if (force) fail('Update check failed')(err)
+      } finally {
+        set({ checkingUpdates: { ...get().checkingUpdates, [gameId]: false } })
+      }
+    },
+
+    async applyUpdates(gameId, list) {
+      if (!list.length) return
+      if (!(await ensureSignedIn(list.map((u) => u.sourceId), 'Updating mods from this site needs your (free) account there.'))) return
+      for (const u of list) {
+        const item = await useDownloads.getState().start({
+          sourceId: u.sourceId,
+          modId: u.sourceModId,
+          versionId: u.latestVersionId,
+          gameId,
+          name: u.name,
+          version: u.latestVersion,
+          thumbnail: u.thumbnail
+        })
+        if (item) set({ updating: { ...get().updating, [`${gameId}:${u.modId}`]: true } })
+      }
+    },
 
     async load(gameId) {
       try {

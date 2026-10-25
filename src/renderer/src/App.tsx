@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { on } from './lib/api'
-import { useApp } from './store/app'
+import { subscribeAppSettings, useApp } from './store/app'
 import { subscribeLibrary, useLibrary } from './store/library'
 import { subscribeMods } from './store/mods'
 import { subscribeDownloads, useDownloads } from './store/downloads'
@@ -53,9 +53,13 @@ export function App() {
     subscribeMods()
     subscribeDownloads()
     subscribeAccounts()
+    const offSettings = subscribeAppSettings()
     const off = on('toast', (t) => useToasts.getState().push(t))
     void Promise.all([useApp.getState().load(), useLibrary.getState().load(), useDownloads.getState().load(), useAccounts.getState().load()]).finally(() => setReady(true))
-    return off
+    return () => {
+      off()
+      offSettings()
+    }
   }, [])
 
   return (

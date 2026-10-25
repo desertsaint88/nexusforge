@@ -107,7 +107,7 @@ function ContinuePlaying({ game }: { game: Game }) {
         </div>
         <GameLogo game={game} className="!max-h-20 !text-4xl" />
         <div className="mt-2 text-[13px] text-ink-300">
-          {formatPlaytime(game.playtimeMinutes)} played · last {relativeTime(game.lastPlayed)}
+          {game.playtimeMinutes ? `${formatPlaytime(game.playtimeMinutes)} played · ` : ''}last played {relativeTime(game.lastPlayed)}
         </div>
         <div className="mt-5 flex gap-2">
           <PlayButton size="lg" onClick={() => void launch(game.id)} disabled={running} label={running ? 'Running' : 'Play'} />

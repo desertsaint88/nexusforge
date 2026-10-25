@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, CircleAlert, CircleCheck, Compass, Download, Info, Library, Minus, Settings, Square, SquareStack, TriangleAlert, UserRound, X } from 'lucide-react'
+import { ArrowLeft, CircleAlert, CircleCheck, Compass, Download, Info, Library, Minus, Search, Settings, Square, SquareStack, TriangleAlert, UserRound, X } from 'lucide-react'
+import { usePalette } from './CommandPalette'
 import { invoke, on } from '../lib/api'
 import { cn, PLATFORM_COLOR, PLATFORM_LABEL } from '../lib/format'
 import { useNav, useToasts, type Route } from '../store/ui'
@@ -49,7 +50,18 @@ export function TitleBar() {
       >
         <ArrowLeft className="size-4" />
       </button>
-      <div className="flex-1" />
+      <div className="flex flex-1 justify-center">
+        <button
+          onClick={() => usePalette.getState().set(true)}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="no-drag flex h-7 w-[min(340px,40vw)] items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.03] px-2.5 text-[12px] text-ink-400 transition-colors hover:border-white/[0.12] hover:bg-white/[0.05] hover:text-ink-200"
+          aria-label="Quick search"
+        >
+          <Search className="size-3.5" />
+          <span className="flex-1 truncate text-left">Search games and pages</span>
+          <kbd className="rounded border border-white/[0.1] px-1 font-mono text-[10px]">Ctrl K</kbd>
+        </button>
+      </div>
       <div className="no-drag flex h-full">
         <WindowButton label="Minimize" onClick={() => void invoke('window:minimize')}>
           <Minus className="size-4" />

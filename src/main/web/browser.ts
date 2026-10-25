@@ -162,7 +162,7 @@ let htmlQueue: Promise<unknown> = Promise.resolve()
 
 const CHALLENGE_PROBE = `(() => {
   const t = document.title || ''
-  const challenged = /just a moment|attention required|verify you are human|checking your browser/i.test(t) ||
+  const challenged = /just a moment|attention required|verify you are human|checking your browser|crowdsec challenge/i.test(t) ||
     !!document.querySelector('#challenge-form, #cf-challenge-running, .cf-turnstile, #challenge-stage')
   return { challenged, ready: document.readyState === 'complete', title: t }
 })()`

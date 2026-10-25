@@ -10,6 +10,7 @@ import { Sidebar, TitleBar, Toasts } from './components/Chrome'
 import { ConfirmHost } from './components/Modal'
 import { DependencyDialogHost } from './components/DependencyDialog'
 import { SitePanelHost } from './components/SitePanel'
+import { CommandPalette } from './components/CommandPalette'
 import { LibraryPage } from './pages/LibraryPage'
 import { GamePage } from './pages/GamePage'
 import { BrowsePage } from './pages/BrowsePage'
@@ -74,6 +75,7 @@ export function App() {
         </div>
         <AnimatePresence>{ready && settings && !settings.firstRunComplete && <Onboarding />}</AnimatePresence>
         <SitePanelHost />
+        <CommandPalette />
         <Toasts />
         <ConfirmHost />
         <DependencyDialogHost />

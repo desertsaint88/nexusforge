@@ -18,6 +18,7 @@ import { findMainExecutable, findExecutables } from './exe-detect'
 import { findPreset, presetTarget } from './presets'
 import { mediaUrl } from '../media-protocol'
 import { readExeVersion } from './exe-version'
+import { followGameFolder, trackableDir } from './tracker'
 
 const log = scoped('library')
 
@@ -451,6 +452,34 @@ function splitArgs(s: string | undefined): string[] {
   return (s.match(/"[^"]*"|\S+/g) ?? []).map((a) => a.replace(/^"|"$/g, ''))
 }
 
+/** Ends a play session: the running mark goes away, and (unless Steam counts it) the time is added. */
+function endSession(id: string, endedAt: number | undefined, countPlaytime: boolean): void {
+  const info = running.get(id)
+  running.delete(id)
+  emit('library:running', runningGames())
+  const current = getGame(id)
+  if (!info || !current) return
+  if (countPlaytime && endedAt) current.playtimeMinutes += Math.max(0, Math.round((endedAt - info.startedAt) / 60000))
+  current.lastPlayed = Date.now()
+  saveGame(current)
+  broadcast()
+}
+
+/** Follows the game in its folder after a launcher (or Steam/Xbox) started it. */
+function followSession(id: string, game: Game, countPlaytime: boolean, appearWithinMs: number): boolean {
+  if (!trackableDir(game.installDir)) return false
+  const session = running.get(id)
+  followGameFolder(game.installDir, {
+    appearWithinMs,
+    stillWanted: () => running.get(id) === session,
+    done: (lastSeen) => {
+      if (lastSeen) log.info(`${game.name} closed (followed in its folder)`)
+      endSession(id, lastSeen, countPlaytime)
+    }
+  })
+  return true
+}
+
 export async function launchGame(id: string): Promise<void> {
   const game = requireGame(id)
   if (running.has(id)) throw new Error(`${game.name} is already running.`)
@@ -458,10 +487,13 @@ export async function launchGame(id: string): Promise<void> {
   const extraArgs = splitArgs(game.launchArgs)
   log.info(`launching ${game.name} (${game.launch.kind})`)
 
-  if (game.launch.kind === 'url') {
-    await shell.openExternal(game.launch.url)
-  } else if (game.launch.kind === 'appx') {
-    spawn('explorer.exe', [`shell:AppsFolder\\${game.launch.aumid}`], { detached: true, stdio: 'ignore' }).unref()
+  if (game.launch.kind === 'url' || game.launch.kind === 'appx') {
+    if (game.launch.kind === 'url') await shell.openExternal(game.launch.url)
+    else spawn('explorer.exe', [`shell:AppsFolder\\${game.launch.aumid}`], { detached: true, stdio: 'ignore' }).unref()
+    // Steam may update first, so the game gets a few minutes to appear. Steam keeps its own play time.
+    running.set(id, { startedAt: Date.now() })
+    emit('library:running', runningGames())
+    if (!followSession(id, game, game.platform !== 'steam', 180_000)) endSession(id, undefined, false)
   } else {
     const exe = game.launch.exe || game.exePath
     if (!exe || !(await exists(exe))) throw new Error('The game executable is missing. Set it in the game settings.')
@@ -482,16 +514,9 @@ export async function launchGame(id: string): Promise<void> {
         emit('library:running', runningGames())
         child.once('exit', () => {
           const info = running.get(id)
-          running.delete(id)
-          emit('library:running', runningGames())
-          const current = getGame(id)
-          if (info && current) {
-            const minutes = Math.round((Date.now() - info.startedAt) / 60000)
-            current.playtimeMinutes += minutes
-            current.lastPlayed = Date.now()
-            saveGame(current)
-            broadcast()
-          }
+          // Gone within 90 s: a launcher that started the real game. Keep following it in the game folder.
+          if (info && Date.now() - info.startedAt < 90_000 && followSession(id, game, true, 60_000)) return
+          endSession(id, Date.now(), true)
         })
         child.unref()
         resolve()

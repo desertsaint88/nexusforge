@@ -106,6 +106,11 @@ export function createBeamngAdapter(ctx: AdapterContext): ModSourceAdapter {
     const b = await ctx.binding(gameId)
     if (b !== 'beamng') throw new Error(gameId ? 'The BeamNG repository only has mods for BeamNG.drive.' : 'Pick BeamNG.drive to search the BeamNG repository.')
   }
+  // beamng.com sometimes puts a bot check (CrowdSec) in front of pages, search first; a real browser view passes it.
+  const page = async (url: string): Promise<string> => {
+    const html = await ctx.text(url)
+    return /<title>\s*CrowdSec Challenge/i.test(html) ? ctx.browserHtml(url, 'persist:beamng') : html
+  }
   return {
     id: 'beamng',
     name: 'BeamNG Repository',
@@ -127,22 +132,22 @@ export function createBeamngAdapter(ctx: AdapterContext): ModSourceAdapter {
       await requireBeamng(gameId)
       const q = query.trim()
       const sort = opts?.sort ?? (q ? 'relevance' : 'downloads')
-      const page = (opts?.page ?? 0) + 1
+      const n = (opts?.page ?? 0) + 1
       if (!q) {
         const ORDER: Partial<Record<ModSort, string>> = { relevance: 'download_count', endorsed: 'rating_weighted', downloads: 'download_count', newest: 'resource_date', updated: 'last_update' }
         // Past the last page the forum shows the last page again; Browse stops when a page brings nothing new.
-        return parseResourceList(await ctx.text(`${BASE}resources/?order=${ORDER[sort] ?? 'download_count'}${page > 1 ? `&page=${page}` : ''}`))
+        return parseResourceList(await page(`${BASE}resources/?order=${ORDER[sort] ?? 'download_count'}${n > 1 ? `&page=${n}` : ''}`))
       }
       // Search result pages are tied to a search id; the first page is all NexusForge shows.
-      if (page > 1) return []
-      const html = await ctx.text(`${BASE}search/search?keywords=${encodeURIComponent(q)}&type=resource_update&order=${sort === 'updated' ? 'date' : 'relevance'}`)
+      if (n > 1) return []
+      const html = await page(`${BASE}search/search?keywords=${encodeURIComponent(q)}&type=resource_update&order=${sort === 'updated' ? 'date' : 'relevance'}`)
       if (/No results found/i.test(html)) return []
       return parseSearchResults(html)
     },
 
     async getModDetails(modId): Promise<ModDetails> {
       if (!/^[a-z0-9-]+\.\d+$/i.test(modId)) throw new Error(`Invalid BeamNG resource: ${modId}`)
-      const details = parseResourcePage(await ctx.text(`${BASE}resources/${modId}/`), modId)
+      const details = parseResourcePage(await page(`${BASE}resources/${modId}/`), modId)
       if (!details.versions.length) throw new Error('This mod has no download on beamng.com (it may only be available in the in-game repository).')
       return details
     },

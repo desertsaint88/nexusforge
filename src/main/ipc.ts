@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import type { IpcInvokeMap, InvokeChannel } from '@shared/ipc'
-import type { AccountId, Settings } from '@shared/types'
+import type { AccountId, ModSort, Settings } from '@shared/types'
 import { getSettings, setSettings } from './store'
 import { logFilePath, scoped, setLogLevel } from './logger'
 import { run } from './util/exec'
@@ -12,8 +12,12 @@ import * as sources from './sources/registry'
 import * as downloads from './downloads/manager'
 import * as panel from './web/panel'
 import * as accounts from './accounts/accounts'
+import * as detect from './mods/detect'
 
 const log = scoped('ipc')
+
+const SORTS: ModSort[] = ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated']
+const modSort = (v: unknown): ModSort | undefined => (SORTS.includes(v as ModSort) ? (v as ModSort) : undefined)
 
 type Handler<C extends InvokeChannel> = (
   event: IpcMainInvokeEvent,
@@ -106,7 +110,7 @@ export function registerIpc(rendererUrl: string): void {
   handle('settings:get', () => getSettings())
   handle('settings:set', async (_e, patch) => {
     const allowed: Array<keyof Settings> = [
-      'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'scanAllDrives', 'modStorageDir',
+      'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'scanAllDrives', 'scanOnStartup', 'modStorageDir',
       'defaultStrategy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete'
     ]
     const clean: Partial<Settings> = {}
@@ -118,7 +122,11 @@ export function registerIpc(rendererUrl: string): void {
   })
 
   handle('library:list', () => library.listGames())
-  handle('library:scan', () => library.scanLibrary())
+  handle('library:scan', async () => {
+    const result = await library.scanLibrary()
+    void detect.rescanGames().catch(() => {})
+    return result
+  })
   handle('library:addManual', (_e, input) => library.addManualGame(input))
   handle('library:update', (_e, id, patch) => library.updateGame(str(id, 'game'), patch ?? {}))
   handle('library:remove', async (_e, id) => {
@@ -142,6 +150,9 @@ export function registerIpc(rendererUrl: string): void {
   handle('mods:files', (_e, gameId, modId) => mods.listModFiles(str(gameId, 'game'), str(modId, 'mod')))
   handle('mods:rootCandidates', (_e, gameId, modId) => mods.rootCandidates(str(gameId, 'game'), str(modId, 'mod')))
   handle('mods:openFolder', (_e, gameId, modId) => mods.openModFolder(str(gameId, 'game'), modId))
+  handle('mods:detected', (_e, gameId) => detect.detectedFor(str(gameId, 'game')))
+  handle('mods:detectedAll', () => detect.allDetected())
+  handle('mods:rescanInstalled', (_e, gameId) => (gameId ? detect.rescanGames([str(gameId, 'game')]) : detect.rescanGames()))
 
   handle('profiles:list', (_e, gameId) => profiles.listProfiles(str(gameId, 'game')))
   handle('profiles:create', (_e, gameId, name, cloneFrom) => profiles.createProfile(str(gameId, 'game'), String(name ?? ''), cloneFrom))
@@ -153,14 +164,21 @@ export function registerIpc(rendererUrl: string): void {
     return profiles.saveProfile(profile)
   })
 
-  handle('deploy:run', (_e, gameId) => mods.deployGame(str(gameId, 'game')))
-  handle('deploy:purge', (_e, gameId) => mods.purgeGame(str(gameId, 'game')))
+  // What's in the game folder changed: refresh its installed-mod scan afterwards.
+  const rescanAfter = async <T>(gameId: string, work: Promise<T>): Promise<T> => {
+    const result = await work
+    void detect.rescanGames([gameId]).catch(() => {})
+    return result
+  }
+  handle('deploy:run', (_e, gameId) => rescanAfter(str(gameId, 'game'), mods.deployGame(gameId)))
+  handle('deploy:purge', (_e, gameId) => rescanAfter(str(gameId, 'game'), mods.purgeGame(gameId)))
   handle('deploy:status', (_e, gameId) => mods.deployStatus(str(gameId, 'game')))
   handle('deploy:probe', (_e, gameId) => mods.probeGame(str(gameId, 'game')))
   handle('conflicts:get', (_e, gameId) => mods.getConflicts(str(gameId, 'game')))
 
   handle('sources:list', () => sources.listSources())
   handle('sources:search', (_e, id, q, gameId) => sources.searchSource(str(id, 'source'), String(q ?? ''), gameId || undefined))
+  handle('sources:query', (_e, id, q, gameId, opts) => sources.querySource(str(id, 'source'), String(q ?? ''), gameId || undefined, { sort: modSort(opts?.sort) }))
   handle('sources:details', (_e, id, modId, gameId) => sources.sourceDetails(str(id, 'source'), str(modId, 'mod'), gameId || undefined))
   handle('sources:bindings', (_e, id, gameId) => sources.sourceBindings(str(id, 'source'), str(gameId, 'game')))
   handle('sources:dependencies', (_e, id, modId, versionId, gameId) => sources.resolveDependencies(str(id, 'source'), str(modId, 'mod'), versionId || undefined, gameId || undefined))
@@ -205,6 +223,12 @@ export function registerIpc(rendererUrl: string): void {
     await sources.reloadSources()
     return info
   })
+  handle('accounts:browserKey', async (_e, id) => {
+    const info = await accounts.browserKeySignIn(accountId(id))
+    await sources.reloadSources()
+    return info
+  })
+  handle('accounts:cancelBrowserKey', (_e, id) => accounts.cancelBrowserKeySignIn(accountId(id)))
   handle('accounts:steamLogin', (e, req) =>
     accounts.signInSteam(
       { user: String(req?.user ?? ''), password: String(req?.password ?? ''), code: req?.code ? String(req.code) : undefined },
@@ -221,4 +245,5 @@ export function registerIpc(rendererUrl: string): void {
   handle('sitepanel:hide', () => panel.hidePanel())
   handle('sitepanel:navigate', (_e, action) => panel.panelNavigate(action === 'back' ? 'back' : 'reload'))
   handle('sitepanel:cancel', () => panel.cancelShownPanel())
+  handle('sitepanel:external', () => panel.openShownExternally())
 }

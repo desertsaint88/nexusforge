@@ -9,12 +9,31 @@ interface AccountsState {
   /** Opens the site's sign-in in the site panel; resolves true once signed in. */
   signIn(id: AccountId, register?: boolean): Promise<boolean>
   signOut(id: AccountId): Promise<void>
+  /** Sign-in through the user's own browser: opens the key page there and waits for the copied key. */
+  signInWithBrowser(id: AccountId): Promise<boolean>
+  /** Accounts waiting for a key copied in the browser. */
+  browserWaiting: AccountId[]
 }
 
-export const useAccounts = create<AccountsState>((set) => ({
+export const useAccounts = create<AccountsState>((set, get) => ({
   accounts: [],
+  browserWaiting: [],
   async load() {
     set({ accounts: await invoke('accounts:list') })
+  },
+  async signInWithBrowser(id) {
+    set({ browserWaiting: [...get().browserWaiting, id] })
+    try {
+      await invoke('accounts:browserKey', id)
+      set({ accounts: await invoke('accounts:list') })
+      return true
+    } catch (err) {
+      const msg = (err as Error).message
+      if (!/cancel/i.test(msg)) toast.error('Sign-in did not finish', msg)
+      return false
+    } finally {
+      set({ browserWaiting: get().browserWaiting.filter((x) => x !== id) })
+    }
   },
   async signIn(id, register) {
     try {

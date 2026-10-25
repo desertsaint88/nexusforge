@@ -29,7 +29,7 @@ function GameVersions({ versions, installed }: { versions?: string[]; installed?
   )
 }
 
-export function ModDetailsModal({ result, gameId, onClose }: { result?: ModSearchResult; gameId?: string; onClose(): void }) {
+export function ModDetailsModal({ result, gameId, installed, onClose }: { result?: ModSearchResult; gameId?: string; installed?: boolean; onClose(): void }) {
   const [details, setDetails] = useState<ModDetails | undefined>()
   const [error, setError] = useState<string | undefined>()
   const [deps, setDeps] = useState<ResolvedDependency[] | undefined>()
@@ -91,9 +91,16 @@ export function ModDetailsModal({ result, gameId, onClose }: { result?: ModSearc
             ) : (
               <div className="accent-gradient absolute inset-0 opacity-25" />
             )}
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0f1016] via-[#0f1016]/40 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c0e] via-[#0b0c0e]/45 to-transparent" />
             <div className="absolute inset-x-6 bottom-4">
-              <h2 className="text-2xl font-bold tracking-tight text-white drop-shadow">{d?.name ?? result.name}</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-2xl font-bold tracking-tight text-white drop-shadow">{d?.name ?? result.name}</h2>
+                {installed && (
+                  <span className="inline-flex h-6 items-center gap-1 rounded-md border border-emerald-300/20 bg-black/60 px-2 text-[11.5px] font-semibold text-emerald-200 backdrop-blur-md">
+                    <CircleCheck className="size-3.5" /> Installed{game ? ` in ${game.name}` : ''}
+                  </span>
+                )}
+              </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[12.5px] text-ink-200">
                 {(d?.author ?? result.author) && <span>by {d?.author ?? result.author}</span>}
                 {(d?.version ?? result.version) && <span className="font-mono">v{d?.version ?? result.version}</span>}

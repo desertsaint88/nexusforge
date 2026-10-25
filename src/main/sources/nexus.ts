@@ -17,6 +17,7 @@ interface GqlMod {
   endorsements?: number
   pictureUrl?: string
   thumbnailUrl?: string
+  createdAt?: string
   updatedAt?: string
   uploader?: { name: string }
   game: { id: number; domainName: string; name?: string }
@@ -126,17 +127,45 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
       return out
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const d = await domain(gameId)
-      const filter: Record<string, unknown> = { gameDomainName: [{ value: d, op: 'EQUALS' }] }
-      if (query.trim()) filter.name = [{ value: query.trim(), op: 'WILDCARD' }]
-      const res = await gql<{ mods: { nodes: GqlMod[] } }>(
-        `query($f: ModsFilter, $s: [ModsSort!]){ mods(filter: $f, sort: $s, count: 48) { nodes {
-          modId name summary author version downloads endorsements thumbnailUrl pictureUrl updatedAt uploader { name } game { id domainName }
-        } } }`,
-        { f: filter, s: [{ endorsements: { direction: 'DESC' } }] }
-      )
-      return res.mods.nodes.map((m) => ({
+      const q = query.trim()
+      const sort = opts?.sort ?? (q ? 'relevance' : 'endorsed')
+      const base: Record<string, unknown> = { gameDomainName: [{ value: d, op: 'EQUALS' }] }
+      if (q) base.name = [{ value: q, op: 'WILDCARD' }]
+      // Nexus' API takes dates as Unix seconds. Trending = best endorsed among new mods ("hot files"),
+      // recent downloads = most downloaded among mods updated in the last 30 days.
+      const since = (days: number) => [{ value: String(Math.floor(Date.now() / 1000) - days * 86400), op: 'GTE' }]
+      const order: Record<string, { direction: 'DESC' }> =
+        sort === 'downloads' || sort === 'downloads_recent' ? { downloads: { direction: 'DESC' } }
+        : sort === 'newest' ? { createdAt: { direction: 'DESC' } }
+        : sort === 'updated' ? { updatedAt: { direction: 'DESC' } }
+        : sort === 'relevance' && q ? { relevance: { direction: 'DESC' } }
+        : { endorsements: { direction: 'DESC' } }
+      const run = async (extra: Record<string, unknown>) =>
+        (
+          await gql<{ mods: { nodes: GqlMod[] } }>(
+            `query($f: ModsFilter, $s: [ModsSort!]){ mods(filter: $f, sort: $s, count: 48) { nodes {
+              modId name summary author version downloads endorsements thumbnailUrl pictureUrl createdAt updatedAt uploader { name } game { id domainName }
+            } } }`,
+            { f: { ...base, ...extra }, s: [order] }
+          )
+        ).mods.nodes
+      let nodes: GqlMod[]
+      if (sort === 'trending') {
+        // Quiet games have few new mods; widen the window until the list is worth showing.
+        nodes = []
+        for (const days of [14, 45, 120]) {
+          nodes = await run({ createdAt: since(days) })
+          if (nodes.length >= 12) break
+        }
+      } else if (sort === 'downloads_recent') {
+        nodes = await run({ updatedAt: since(30) })
+        if (nodes.length < 12) nodes = await run({ updatedAt: since(120) })
+      } else nodes = await run({})
+      return nodes.map((m) => ({
         id: encodeId(m.game.domainName, m.game.id, m.modId),
         sourceId: 'nexus',
         name: m.name,
@@ -146,6 +175,7 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
         downloads: m.downloads,
         endorsements: m.endorsements,
         updatedAt: m.updatedAt,
+        createdAt: m.createdAt,
         version: m.version,
         url: `https://www.nexusmods.com/${m.game.domainName}/mods/${m.modId}`
       }))

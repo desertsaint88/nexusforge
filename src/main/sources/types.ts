@@ -1,4 +1,4 @@
-import type { Game, ModDependency, ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
+import type { Game, ModDependency, ModDetails, ModSearchOptions, ModSearchResult, ModSort, SourceGameBinding } from '@shared/types'
 
 /**
  * A mod source. Implement this to plug any mod site or feed into NexusForge.
@@ -8,11 +8,14 @@ import type { Game, ModDependency, ModDetails, ModSearchResult, SourceGameBindin
 export interface ModSourceAdapter {
   id: string
   name: string
-  search(query: string, gameId?: string): Promise<ModSearchResult[]>
+  /** `opts.sort` is only set for orders listed in `sorts`; NexusForge sorts the results itself otherwise. */
+  search(query: string, gameId?: string, opts?: ModSearchOptions): Promise<ModSearchResult[]>
   getModDetails(modId: string, gameId?: string): Promise<ModDetails>
   getDownloadUrl(modId: string, versionId: string, gameId?: string): Promise<string>
 
   // Optional extras ----------------------------------------------------------
+  /** Orders the source produces on its side (top rated, most downloaded, trending, …). */
+  sorts?: ModSort[]
   description?: string
   homepage?: string
   /** Shown as the label of the per-game binding field ("Thunderstore community"). */

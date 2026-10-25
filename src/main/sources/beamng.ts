@@ -1,7 +1,8 @@
 // The official BeamNG.drive mod repository (beamng.com/resources). No account needed: "Download Now" links
 // redirect to the file. BeamNG loads mods as zip files, which the BeamNG preset keeps packed.
 
-import type { ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
+import type { ModDetails, ModSearchResult, ModSort, SourceGameBinding } from '@shared/types'
+import { sortResults } from '@shared/sort'
 import type { AdapterContext, ModSourceAdapter } from './types'
 import { decodeEntities, toPlainText } from './http'
 
@@ -116,13 +117,21 @@ export function createBeamngAdapter(ctx: AdapterContext): ModSourceAdapter {
       return /beamng/i.test(game.name) || game.platformId === '284160' ? [{ value: 'beamng', label: 'BeamNG.drive' }] : []
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       await requireBeamng(gameId)
       const q = query.trim()
-      if (!q) return parseResourceList(await ctx.text(`${BASE}resources/?order=download_count`))
-      const html = await ctx.text(`${BASE}search/search?keywords=${encodeURIComponent(q)}&type=resource_update&order=relevance`)
+      const sort = opts?.sort ?? (q ? 'relevance' : 'downloads')
+      if (!q) {
+        const ORDER: Partial<Record<ModSort, string>> = { relevance: 'download_count', endorsed: 'rating_weighted', downloads: 'download_count', newest: 'resource_date', updated: 'last_update' }
+        return parseResourceList(await ctx.text(`${BASE}resources/?order=${ORDER[sort] ?? 'download_count'}`))
+      }
+      // The site's search orders by relevance or date only; other orders are sorted from what it found.
+      const html = await ctx.text(`${BASE}search/search?keywords=${encodeURIComponent(q)}&type=resource_update&order=${sort === 'updated' ? 'date' : 'relevance'}`)
       if (/No results found/i.test(html)) return []
-      return parseSearchResults(html)
+      const found = parseSearchResults(html)
+      return sort === 'relevance' || sort === 'updated' ? found : sortResults(found, sort)
     },
 
     async getModDetails(modId): Promise<ModDetails> {

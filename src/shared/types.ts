@@ -55,6 +55,10 @@ export interface Game {
   modding: GameModding
   /** Fields the user edited; scans won't overwrite them. */
   userEdited?: Array<'name' | 'exePath' | 'launch' | 'art'>
+  /** Version of the artwork lookup that last checked this game's pictures (newer lookups re-check once). */
+  artRev?: number
+  /** Official title from the store match ("Hell Let Loose: Vietnam" for a folder called "Hell.Let.Loose.Vietnam"). */
+  storeName?: string
 }
 
 export interface DetectedGame {
@@ -144,6 +148,59 @@ export interface Profile {
 export interface ModFileEntry {
   rel: string
   size: number
+}
+
+/** How a mod found on disk was put there and recognized. */
+export type DetectedModKind =
+  | 'bepinex'
+  | 'melonloader'
+  | 'ue4ss'
+  | 'pak'
+  | 'gmod-addon'
+  | 'beamng'
+  | 'workshop'
+  | 'modio'
+  | 'plugin'
+  | 'script'
+  | 'scenery'
+  | 'aircraft'
+  | 'contraption'
+  | 'bo3'
+  | 'jar'
+  | 'loader'
+  | 'folder'
+
+/** A mod that is installed in a game, whether NexusForge put it there or not. */
+export interface DetectedMod {
+  /** Stable key (kind + relative path). */
+  key: string
+  name: string
+  kind: DetectedModKind
+  /** File or folder of the mod. */
+  path: string
+  version?: string
+  author?: string
+  /** False when the game has it switched off (BeamNG db.json, UE4SS mods.txt, .disabled files). */
+  enabled?: boolean
+  /** Where it came from, when its files say so (Workshop id, mod.io id, BeamNG resource, Thunderstore package). */
+  source?: { sourceId: string; modId: string }
+  /** What identified it: "manifest.json", "GMA header", "db.json", "file version", "folder layout". */
+  detectedBy: string
+  /** Deployed by NexusForge: the id of the installed mod it belongs to. */
+  managedModId?: string
+  sizeBytes?: number
+}
+
+/** What NexusForge knows about modding a game: support, frameworks and every mod installed. */
+export interface GameModInfo {
+  gameId: string
+  scannedAt: number
+  /** The game can be modded (known preset, mod loader present, engine with mod support, or mods found). */
+  supported: boolean
+  /** Short reasons, e.g. "BepInEx installed", "Unreal Engine (.pak mods)", "Steam Workshop". */
+  support: string[]
+  engine?: 'unity' | 'unreal' | 'source' | 'beamng' | 'bethesda' | 'other'
+  mods: DetectedMod[]
 }
 
 export interface ConflictFile {
@@ -248,8 +305,28 @@ export interface ModSearchResult {
   downloads?: number
   endorsements?: number
   updatedAt?: string
+  /** When the mod was first published. */
+  createdAt?: string
   version?: string
   url?: string
+}
+
+/**
+ * Orders for mod lists. Sources sort on their side where they can; the rest is sorted from the results.
+ * downloads_recent: most downloaded among mods updated in the last 30 days.
+ * trending: what the source calls trending/hot, else the best-rated mods of the last two weeks.
+ */
+export type ModSort = 'relevance' | 'endorsed' | 'downloads' | 'downloads_recent' | 'trending' | 'newest' | 'updated'
+
+export interface ModSearchOptions {
+  sort?: ModSort
+}
+
+export interface ModSearchResponse {
+  results: ModSearchResult[]
+  sort: ModSort
+  /** The source can't order by this itself; NexusForge sorted the results it got. */
+  approximate?: boolean
 }
 
 /** Another mod (or external tool) a mod needs. */
@@ -323,6 +400,8 @@ export interface SourceInfo {
   homepage?: string
   /** Placeholder text for the per-game binding field (e.g. "Thunderstore community"). */
   bindingLabel?: string
+  /** Orders the source can produce itself (others are approximated from the results). */
+  sorts?: ModSort[]
   error?: string
 }
 
@@ -386,6 +465,8 @@ export interface SitePanelState {
   canGoBack: boolean
   /** Every page that is waiting, shown or not. */
   waiting: Array<{ id: string; title: string }>
+  /** The site's bot check (Cloudflare) refused this window even after a retry. */
+  blocked?: boolean
 }
 
 export interface DownloadRequest {
@@ -450,6 +531,8 @@ export interface Settings {
   customFolders: string[]
   /** Also look for game folders on every local drive (Games folders, extra Steam libraries, launcher folders). */
   scanAllDrives: boolean
+  /** Look for new games and installed mods every time NexusForge starts. */
+  scanOnStartup: boolean
   modStorageDir: string
   defaultStrategy: DeployStrategy
   /** What to do with mods a download needs: ask every time, install them automatically, or never. */

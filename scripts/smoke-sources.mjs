@@ -99,7 +99,9 @@ await safe('drives', async () => {
   check('game folders found on every drive', roots.length > 0, roots.join(' | '))
   check('games from more than one drive', drives.length > 1, `${local.length} games on ${drives.join(', ')}: ${local.slice(0, 6).map((g) => g.name).join(', ')}…`)
   const names = games.map((g) => g.name)
-  check('release folder names cleaned', names.includes('Hell Let Loose Vietnam') && !names.some((n) => /OFME|v\d+ \d+ \d+/.test(n)), names.filter((n) => /hell|people|uplink/i.test(n)).join(', '))
+  // Titles may already carry the store's spelling ("Hell Let Loose: Vietnam"); punctuation doesn't count.
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  check('release folder names cleaned', names.some((n) => norm(n) === 'hellletloosevietnam') && !names.some((n) => /OFME|v\d+ \d+ \d+/.test(n)), names.filter((n) => /hell|people|uplink/i.test(n)).join(', '))
   // Every game installed on this PC (C:\Games, E:\Games incl. "From D", Steam, the PS2 disc for PCSX2).
   const expected = [
     'BeamNG.drive', 'Bodycam', 'Call of Duty - Modern Warfare 4', 'Firewatch', 'GROUND BRANCH', 'Ready Or Not', 'X-Plane 12', 'Jak II - Renegade (PS2)',
@@ -107,7 +109,6 @@ await safe('drives', async () => {
     'Call Of Duty Black Ops III', 'GarrysMod', 'Grand Theft Auto V', 'Hell Let Loose Vietnam', 'People Playground', 'Sniper Killer', 'Watch Dogs',
     'Way of the Hunter 2', 'Wolfenstein Youngblood', 'Evil Egg', 'FNAF In Real Time', 'Rolla Demo', 'Terraria', 'Uplink'
   ]
-  const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim()
   const missing = expected.filter((n) => !names.some((x) => norm(x) === norm(n)))
   check(`all ${expected.length} games on this PC listed`, missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : `${games.length} games in the library`)
   const jak = games.find((g) => /Jak II/.test(g.name))

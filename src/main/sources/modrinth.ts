@@ -1,4 +1,4 @@
-import type { ModDependency, ModDetails, ModSearchResult } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult, ModSort } from '@shared/types'
 import type { AdapterContext, ModSourceAdapter } from './types'
 
 const API = 'https://api.modrinth.com/v2'
@@ -13,6 +13,7 @@ interface Hit {
   downloads: number
   follows: number
   date_modified: string
+  date_created?: string
   latest_version?: string
 }
 
@@ -50,8 +51,12 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
     description: 'Open-source Minecraft mod platform (mods, resource packs, shaders). Public API, no account needed.',
     homepage: 'https://modrinth.com',
 
-    async search(query): Promise<ModSearchResult[]> {
-      const res = await ctx.json<{ hits: Hit[] }>(`${API}/search?query=${encodeURIComponent(query)}&limit=40&index=${query ? 'relevance' : 'downloads'}`)
+    sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
+
+    async search(query, _gameId, opts): Promise<ModSearchResult[]> {
+      const INDEX: Partial<Record<ModSort, string>> = { relevance: 'relevance', endorsed: 'follows', downloads: 'downloads', newest: 'newest', updated: 'updated' }
+      const index = INDEX[opts?.sort ?? (query ? 'relevance' : 'downloads')] ?? 'downloads'
+      const res = await ctx.json<{ hits: Hit[] }>(`${API}/search?query=${encodeURIComponent(query)}&limit=40&index=${index}`)
       return res.hits.map((h) => ({
         id: h.project_id,
         sourceId: 'modrinth',
@@ -62,6 +67,7 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
         downloads: h.downloads,
         endorsements: h.follows,
         updatedAt: h.date_modified,
+        createdAt: h.date_created,
         url: `https://modrinth.com/project/${h.slug}`
       }))
     },

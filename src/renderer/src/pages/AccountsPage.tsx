@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CircleCheck, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react'
+import { CircleCheck, Globe, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react'
 import type { AccountInfo } from '@shared/types'
 import { invoke, on } from '../lib/api'
 import { cn } from '../lib/format'
 import { useAccounts } from '../store/accounts'
 import { confirm, toast } from '../store/ui'
-import { Badge, Button, Card, Input } from '../components/ui'
+import { Badge, Button, Card, Input, Spinner } from '../components/ui'
 
 const LOGO: Record<string, { short: string; color: string }> = {
   nexus: { short: 'N', color: '#d98f40' },
@@ -37,7 +37,7 @@ function KeyFallback({ account }: { account: AccountInfo }) {
       </button>
     )
   return (
-    <div className="mt-3 flex gap-2">
+    <div className="mt-1 flex w-full gap-2">
       <div className="relative flex-1">
         <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-400" />
         <Input type="password" mono className="pl-9" placeholder={`Paste your ${account.name} API key`} value={key} onChange={(e) => setKey(e.target.value)} autoFocus />
@@ -65,8 +65,24 @@ function KeyFallback({ account }: { account: AccountInfo }) {
   )
 }
 
+/** Waiting for the key to be copied in the user's own browser. */
+function BrowserWaiting({ account }: { account: AccountInfo }) {
+  return (
+    <div className="mt-3 flex items-start gap-3 rounded-xl border border-white/[0.08] bg-black/30 px-3.5 py-3">
+      <Spinner className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-300">
+        Your browser opened {account.name}'s API key page. Sign in there if needed, then <span className="text-ink-100">copy your personal API key</span> (the copy button next to it). NexusForge picks it up from the clipboard and checks it.
+      </div>
+      <Button size="sm" variant="ghost" onClick={() => void invoke('accounts:cancelBrowserKey', account.id)}>
+        Cancel
+      </Button>
+    </div>
+  )
+}
+
 function WebAccountCard({ account }: { account: AccountInfo }) {
-  const { signIn, signOut } = useAccounts()
+  const { signIn, signOut, signInWithBrowser } = useAccounts()
+  const waiting = useAccounts((s) => s.browserWaiting.includes(account.id))
   return (
     <Card className="p-5">
       <div className="flex items-start gap-4">
@@ -85,7 +101,15 @@ function WebAccountCard({ account }: { account: AccountInfo }) {
             )}
           </div>
           <p className="mt-1 text-[12.5px] leading-relaxed text-ink-400">{account.signedIn && account.detail ? account.detail : account.unlocks}</p>
-          {!account.signedIn && <KeyFallback account={account} />}
+          {!account.signedIn && waiting && <BrowserWaiting account={account} />}
+          {!account.signedIn && !waiting && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <button className="flex items-center gap-1 text-[12px] text-ink-400 hover:text-ink-200 hover:underline" disabled={account.busy} onClick={() => void signInWithBrowser(account.id)}>
+                <Globe className="size-3.5" /> Already signed in in your browser? Use it instead
+              </button>
+              <KeyFallback account={account} />
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-stretch gap-2">
           {account.signedIn ? (
@@ -101,7 +125,7 @@ function WebAccountCard({ account }: { account: AccountInfo }) {
             </Button>
           ) : (
             <>
-              <Button variant="primary" loading={account.busy} icon={<LogIn className="size-4" />} onClick={() => void signIn(account.id)}>
+              <Button variant="primary" loading={account.busy && !waiting} disabled={waiting} icon={<LogIn className="size-4" />} onClick={() => void signIn(account.id)}>
                 Sign in
               </Button>
               <Button variant="ghost" size="sm" disabled={account.busy} icon={<UserPlus className="size-3.5" />} onClick={() => void signIn(account.id, true)}>

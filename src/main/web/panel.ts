@@ -2,7 +2,7 @@
 // the main window, over a placeholder the renderer draws, instead of in separate browser windows.
 // Several pages can wait at once; one is shown at a time.
 
-import { BrowserWindow, WebContentsView, type Rectangle } from 'electron'
+import { BrowserWindow, shell, WebContentsView, type Rectangle } from 'electron'
 import type { SitePanelState } from '@shared/types'
 import { emit } from '../events'
 
@@ -11,6 +11,8 @@ interface Entry {
   title: string
   hint: string
   view: WebContentsView
+  /** The site's bot check refused this page. */
+  blocked?: boolean
   /** Called when the user cancels from the panel header. */
   onCancel?(): void
 }
@@ -49,7 +51,8 @@ export function panelState(): SitePanelState {
     url,
     loading: Boolean(wc && !wc.isDestroyed() && wc.isLoading()),
     canGoBack: Boolean(wc && !wc.isDestroyed() && wc.navigationHistory.canGoBack()),
-    waiting: [...entries.values()].map((x) => ({ id: x.id, title: x.title }))
+    waiting: [...entries.values()].map((x) => ({ id: x.id, title: x.title })),
+    blocked: Boolean(e?.blocked)
   }
 }
 
@@ -66,7 +69,8 @@ function attach(e: Entry): void {
   shownId = e.id
   if (win.isMinimized()) win.restore()
   win.focus()
-  e.view.webContents.focus()
+  const wc = e.view.webContents as Electron.WebContents | undefined
+  if (wc && !wc.isDestroyed()) wc.focus()
 }
 
 function detach(): void {
@@ -119,6 +123,27 @@ export function setPanelHint(id: string, hint: string): void {
   if (shownId === id) publish()
 }
 
+const BLOCKED_HINT =
+  "The site's bot check (Cloudflare) keeps refusing this window. Click “Open in my browser” and finish there; for an account, copy your API key there and NexusForge picks it up."
+
+/** Marks a page whose bot check failed even after a retry; the panel then offers the user's own browser. */
+export function setPanelBlocked(id: string, blocked: boolean): void {
+  const e = entries.get(id)
+  if (!e || Boolean(e.blocked) === blocked) return
+  e.blocked = blocked
+  if (blocked) e.hint = BLOCKED_HINT
+  if (shownId === id) publish()
+}
+
+/** Opens the page shown in the panel in the default browser. */
+export async function openShownExternally(): Promise<void> {
+  const e = shownId ? entries.get(shownId) : undefined
+  const wc = e?.view.webContents
+  const url = wc && !wc.isDestroyed() ? wc.getURL() : ''
+  if (!/^https?:\/\//i.test(url)) throw new Error('No web page is open.')
+  await shell.openExternal(url)
+}
+
 /** Removes a page from the panel and closes it. */
 export function removePanelEntry(id: string): void {
   const e = entries.get(id)
@@ -127,8 +152,9 @@ export function removePanelEntry(id: string): void {
   if (wasShown) detach()
   entries.delete(id)
   panelWanted.delete(id)
-  const wc = e.view.webContents
-  if (!wc.isDestroyed()) wc.close()
+  // During shutdown the view's page can already be gone.
+  const wc = e.view.webContents as Electron.WebContents | undefined
+  if (wc && !wc.isDestroyed()) wc.close()
   // The next page that needs the user takes its place; otherwise the panel closes.
   const next = wasShown ? [...entries.values()].find((x) => panelWanted.has(x.id)) : undefined
   if (next) attach(next)

@@ -1,4 +1,4 @@
-import type { ModDependency, ModDetails, ModSearchResult, SourceGameBinding } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult, ModSort, SourceGameBinding } from '@shared/types'
 import type { AdapterContext, ModSourceAdapter } from './types'
 import { gameNameVariants, nameScore } from './http'
 
@@ -110,9 +110,14 @@ export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter
         .map(({ c }) => ({ value: c.identifier, label: c.name }))
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    // No trending list on Thunderstore; NexusForge approximates it from the newest packages' ratings.
+    sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const c = await community(gameId)
-      const url = `${BASE}/api/cyberstorm/listing/${encodeURIComponent(c)}/?q=${encodeURIComponent(query)}&ordering=${query ? 'most-downloaded' : 'top-rated'}&page_size=48`
+      const ORDER: Partial<Record<ModSort, string>> = { relevance: 'most-downloaded', endorsed: 'top-rated', downloads: 'most-downloaded', newest: 'newest', updated: 'last-updated' }
+      const ordering = ORDER[opts?.sort ?? (query ? 'relevance' : 'endorsed')] ?? 'top-rated'
+      const url = `${BASE}/api/cyberstorm/listing/${encodeURIComponent(c)}/?q=${encodeURIComponent(query)}&ordering=${ordering}&page_size=48`
       const res = await ctx.json<{ results: ListingItem[] }>(url)
       return res.results
         .filter((r) => !r.is_nsfw && !r.is_deprecated)

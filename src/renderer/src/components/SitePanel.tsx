@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, Ban, Globe, Lock, MousePointerClick, RotateCw } from 'lucide-react'
+import { ArrowLeft, Ban, ExternalLink, Globe, Lock, MousePointerClick, RotateCw, ShieldAlert } from 'lucide-react'
 import type { SitePanelState } from '@shared/types'
 import { invoke, on } from '../lib/api'
 import { cn } from '../lib/format'
@@ -70,7 +70,7 @@ export function SitePanelHost() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
         >
-          <div className="absolute inset-0 bg-black/55 backdrop-blur-[5px]" />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-[5px]" />
           <motion.div
             className="glass-strong relative flex w-full max-w-[1280px] flex-col overflow-hidden rounded-3xl"
             initial={{ scale: 0.97, y: 10 }}
@@ -78,8 +78,8 @@ export function SitePanelHost() {
             transition={{ type: 'spring', stiffness: 420, damping: 34 }}
           >
             <div className="flex items-start gap-3.5 px-5 pt-4 pb-3">
-              <div className="accent-gradient flex size-9 shrink-0 items-center justify-center rounded-xl text-white shadow-lg">
-                <MousePointerClick className="size-4.5" />
+              <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl border text-white', state.blocked ? 'border-amber-300/25 bg-amber-500/10 text-amber-200' : 'accent-gradient border-white/10')}>
+                {state.blocked ? <ShieldAlert className="size-4.5" /> : <MousePointerClick className="size-4.5" />}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -105,6 +105,16 @@ export function SitePanelHost() {
                 </Button>
                 <Button size="sm" variant="ghost" className="px-2" aria-label="Reload" onClick={() => void invoke('sitepanel:navigate', 'reload')}>
                   <RotateCw className={cn('size-3.5', state.loading && 'animate-spin')} />
+                </Button>
+                {/* Way out of a bot check that refuses the app: finish in the user's own browser. */}
+                <Button
+                  size="sm"
+                  variant={state.blocked ? 'primary' : 'ghost'}
+                  icon={<ExternalLink className="size-3.5" />}
+                  title="Open this page in your own browser"
+                  onClick={() => void invoke('sitepanel:external').catch(() => {})}
+                >
+                  Open in my browser
                 </Button>
                 <Button size="sm" variant="ghost" icon={<Ban className="size-3.5" />} onClick={() => void invoke('sitepanel:cancel')}>
                   Cancel

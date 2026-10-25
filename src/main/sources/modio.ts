@@ -1,4 +1,4 @@
-import type { ModDependency, ModDetails, ModSearchResult, ModVersion, SourceGameBinding } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult, ModSort, ModVersion, SourceGameBinding } from '@shared/types'
 import type { AdapterContext, ModSourceAdapter } from './types'
 import { gameNameVariants, nameScore, toPlainText } from './http'
 
@@ -13,6 +13,7 @@ interface MioMod {
   description_plaintext?: string
   profile_url: string
   date_updated: number
+  date_added?: number
   submitted_by?: { username: string }
   logo?: { thumb_320x180?: string; thumb_640x360?: string; original?: string }
   media?: { images?: Array<{ original: string }> }
@@ -60,6 +61,7 @@ export function createModioAdapter(ctx: AdapterContext): ModSourceAdapter {
       downloads: m.stats?.downloads_total,
       endorsements: m.stats?.ratings_positive,
       updatedAt: new Date(m.date_updated * 1000).toISOString(),
+      createdAt: m.date_added ? new Date(m.date_added * 1000).toISOString() : undefined,
       version: m.modfile?.version,
       url: m.profile_url
     }
@@ -84,12 +86,24 @@ export function createModioAdapter(ctx: AdapterContext): ModSourceAdapter {
       return [...seen.entries()].sort((a, b) => b[1].score - a[1].score).map(([id, v]) => ({ value: String(id), label: v.label }))
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       // Without a key the game lookup fails too; say what's actually missing.
       key()
       const g = await ctx.binding(gameId)
       if (!g) throw new Error(gameId ? 'This game is not on mod.io, or choose it in the game settings.' : 'Pick a game to search mod.io.')
-      const params: Record<string, string> = { _limit: '48', _sort: query.trim() ? '-popular' : '-downloads_total' }
+      // mod.io's "popular" ranks by today's downloads, which is both its trending list and "recent downloads".
+      const SORT: Record<ModSort, string> = {
+        relevance: '-popular',
+        endorsed: '-rating',
+        downloads: '-downloads_total',
+        downloads_recent: '-popular',
+        trending: '-popular',
+        newest: '-date_live',
+        updated: '-date_updated'
+      }
+      const params: Record<string, string> = { _limit: '48', _sort: SORT[opts?.sort ?? (query.trim() ? 'relevance' : 'downloads')] }
       if (query.trim()) params._q = query.trim()
       const res = await get<{ data: MioMod[] }>(`/games/${g}/mods`, params)
       return res.data.map(toResult)

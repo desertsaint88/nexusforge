@@ -7,8 +7,9 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
 type Size = 'sm' | 'md' | 'lg'
 
 const variants: Record<Variant, string> = {
+  // Dark and quiet: the main action stands out by contrast and weight, not by color.
   primary:
-    'accent-gradient text-white shadow-[0_8px_30px_-8px_color-mix(in_oklab,var(--nf-accent)_70%,transparent)] hover:brightness-110 active:brightness-95 border border-white/15',
+    'accent-gradient text-ink-100 border border-white/[0.13] shadow-[0_10px_28px_-14px_rgba(0,0,0,0.95)] hover:border-white/[0.22] hover:text-white hover:brightness-125 active:brightness-100',
   secondary: 'bg-white/[0.06] hover:bg-white/[0.1] text-ink-100 border border-white/[0.08]',
   outline: 'bg-transparent hover:bg-white/[0.05] text-ink-100 border border-white/[0.12]',
   ghost: 'bg-transparent hover:bg-white/[0.06] text-ink-200 hover:text-ink-100 border border-transparent',
@@ -86,7 +87,7 @@ export function Toggle({ checked, onChange, disabled, label }: { checked: boolea
       }}
       className={cn(
         'no-drag relative inline-flex h-5.5 w-9.5 shrink-0 items-center rounded-full border transition-colors duration-200 disabled:opacity-40',
-        checked ? 'accent-gradient border-white/20' : 'border-white/10 bg-white/[0.08]'
+        checked ? 'accent-line border-white/15' : 'border-white/10 bg-white/[0.07]'
       )}
     >
       <motion.span
@@ -143,19 +144,60 @@ export function ProgressBar({ value, indeterminate, className }: { value?: numbe
     <div className={cn('relative h-1.5 w-full overflow-hidden rounded-full bg-white/[0.07]', className)}>
       {indeterminate ? (
         <motion.div
-          className="accent-gradient absolute inset-y-0 w-1/3 rounded-full"
+          className="accent-line absolute inset-y-0 w-1/3 rounded-full"
           animate={{ x: ['-100%', '300%'] }}
           transition={{ duration: 1.3, repeat: Infinity, ease: 'easeInOut' }}
         />
       ) : (
         <motion.div
-          className="accent-gradient absolute inset-y-0 left-0 rounded-full"
+          className="accent-line absolute inset-y-0 left-0 rounded-full"
           initial={false}
           animate={{ width: `${Math.max(0, Math.min(100, (value ?? 0) * 100))}%` }}
           transition={{ type: 'spring', stiffness: 120, damping: 24 }}
         />
       )}
     </div>
+  )
+}
+
+/** NexusForge's play mark: a soft-cornered triangle, optically centered. */
+export function PlayGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={cn('size-4', className)}>
+      <path d="M8.6 5.2c-.8-.5-1.85.08-1.85 1.03v11.54c0 .95 1.05 1.53 1.85 1.03l9.3-5.77a1.2 1.2 0 0 0 0-2.06z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/**
+ * The Play button: near-black, a hairline border and the play mark in a small ring. Hover only lifts the
+ * border and the text, so it sits calmly on top of any cover art.
+ */
+export function PlayButton({
+  label = 'Play',
+  size = 'md',
+  className,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label?: ReactNode; size?: 'sm' | 'md' | 'lg' }) {
+  const s = {
+    sm: { box: 'h-9 gap-2 rounded-xl pl-1.5 pr-3.5 text-[12.5px]', ring: 'size-6', glyph: 'size-3' },
+    md: { box: 'h-11 gap-2.5 rounded-2xl pl-2 pr-5 text-[14px]', ring: 'size-7', glyph: 'size-3.5' },
+    lg: { box: 'h-12 gap-3 rounded-2xl pl-2 pr-6 text-[15px]', ring: 'size-8', glyph: 'size-4' }
+  }[size]
+  return (
+    <button
+      className={cn(
+        'no-drag group/play inline-flex shrink-0 items-center justify-center border border-white/[0.1] bg-[#0b0c0e]/85 font-semibold tracking-wide text-ink-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_12px_30px_-16px_rgba(0,0,0,1)] backdrop-blur-md transition-all duration-200 hover:border-white/[0.24] hover:bg-[#121316]/90 hover:text-white active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45',
+        s.box,
+        className
+      )}
+      {...rest}
+    >
+      <span className={cn('flex shrink-0 items-center justify-center rounded-full border border-white/[0.14] bg-white/[0.04] transition-colors group-hover/play:border-white/30 group-hover/play:bg-white/[0.08]', s.ring)}>
+        <PlayGlyph className={cn('translate-x-[0.5px]', s.glyph)} />
+      </span>
+      {label}
+    </button>
   )
 }
 

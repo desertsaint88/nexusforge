@@ -13,7 +13,7 @@ import { scanGog } from './gog'
 import { scanCustomFolders, cleanGameName } from './custom'
 import { findGameRoots } from './drives'
 import { emulatorGameDirs, findEmulators, scanEmulatorGames, type RomDir } from './emulators'
-import { exeIcon, fetchStoreArt } from './artwork'
+import { ART_REV, exeIcon, fetchStoreArt, mergeArt, norm } from './artwork'
 import { findMainExecutable, findExecutables } from './exe-detect'
 import { findPreset, presetTarget } from './presets'
 import { mediaUrl } from '../media-protocol'
@@ -62,19 +62,22 @@ function fromDetected(d: DetectedGame): Game {
 function mergeDetected(existing: Game, d: DetectedGame): Game {
   const edited = new Set(existing.userEdited ?? [])
   const next: Game = { ...existing, missing: false, emulator: d.emulator }
-  if (!edited.has('name')) next.name = d.name
+  // The store's spelling of the title survives rescans as long as it's still the same name.
+  if (!edited.has('name')) next.name = existing.storeName && norm(existing.storeName) === norm(d.name) ? existing.storeName : d.name
   next.installDir = d.installDir
   if (!edited.has('exePath')) next.exePath = d.exePath ?? existing.exePath
   if (!edited.has('launch')) next.launch = d.launch
   // Keep artwork we fetched before when the scanner found nothing better.
   if (!edited.has('art')) {
-    next.art = {
+    const scanned: Game['art'] = {
       capsule: d.art.capsule.length ? d.art.capsule : existing.art.capsule,
       hero: d.art.hero.length ? d.art.hero : existing.art.hero,
       header: d.art.header.length ? d.art.header : existing.art.header,
       logo: d.art.logo.length ? d.art.logo : existing.art.logo,
       icon: d.art.icon ?? existing.art.icon
     }
+    // Verified store pictures from the artwork lookup beat the scanner's guessed CDN paths.
+    next.art = (existing.artRev ?? 0) >= ART_REV ? mergeArt(scanned, existing.art) : scanned
   }
   if (d.playtimeMinutes !== undefined) next.playtimeMinutes = Math.max(d.playtimeMinutes, existing.playtimeMinutes)
   if (d.lastPlayed) next.lastPlayed = Math.max(d.lastPlayed, existing.lastPlayed ?? 0)
@@ -223,6 +226,11 @@ async function doScan(): Promise<ScanResult> {
 
 let enriching = false
 
+/** Re-checks icons, versions and artwork of the whole library (startup, after a newer artwork lookup). */
+export function refreshArtwork(): Promise<void> {
+  return enrichArtwork(listGames())
+}
+
 /** Exe icons for everything, store artwork for games that have none. Runs in the background. */
 async function enrichArtwork(games: Game[]): Promise<void> {
   if (enriching) return
@@ -256,14 +264,27 @@ async function enrichArtwork(games: Game[]): Promise<void> {
     }
     if (changed) broadcast()
     if (!settings.autoFetchArtwork) return
-    const needArt = games.filter((g) => g.platform !== 'steam' && !g.art.capsule.length && !g.customArt?.capsule && !(g.userEdited ?? []).includes('art'))
+    // Every game is looked up once per artwork revision: missing pictures, and old ones that may be broken.
+    const needArt = games.filter((g) => (g.artRev ?? 0) < ART_REV && !g.customArt?.capsule && !(g.userEdited ?? []).includes('art'))
     for (const g of needArt) {
-      const art = await fetchStoreArt(g)
-      const current = getGame(g.id)
-      if (art && current) {
-        current.art = { ...art, icon: current.art.icon }
+      const before = getGame(g.id)
+      if (!before) continue
+      // Console games get their box art from the emulator lookup.
+      if (before.emulator && before.art.capsule.length) {
+        saveGame({ ...before, artRev: ART_REV })
+        continue
+      }
+      try {
+        const found = await fetchStoreArt(before)
+        const current = getGame(g.id)
+        if (!current) continue
+        if (found) applyArt(current, found)
+        current.artRev = ART_REV
         saveGame(current)
         broadcast()
+      } catch (err) {
+        // Offline or Steam hiccup: try again next time.
+        log.warn(`artwork lookup for "${before.name}" failed: ${(err as Error).message}`)
       }
     }
   } finally {
@@ -271,11 +292,22 @@ async function enrichArtwork(games: Game[]): Promise<void> {
   }
 }
 
+/** Puts found artwork (and the store's spelling of the title, when it is the same name) on a game. */
+function applyArt(game: Game, found: NonNullable<Awaited<ReturnType<typeof fetchStoreArt>>>): void {
+  game.art = game.platform === 'steam' ? mergeArt(game.art, found.art) : { ...found.art, icon: game.art.icon }
+  const edited = new Set(game.userEdited ?? [])
+  if (found.match?.kind === 'exact' && game.platform !== 'steam' && !edited.has('name') && norm(found.match.title) === norm(game.name)) {
+    game.storeName = found.match.title
+    game.name = found.match.title
+  }
+}
+
 export async function refetchArtwork(id: string): Promise<Game> {
   const game = requireGame(id)
-  const art = await fetchStoreArt(game)
-  if (!art) throw new Error(`No artwork found for "${game.name}" on the Steam store.`)
-  game.art = { ...art, icon: game.art.icon }
+  const found = await fetchStoreArt(game)
+  if (!found) throw new Error(`No artwork found for "${game.name}" on the Steam store or in its folder.`)
+  applyArt(game, found)
+  game.artRev = ART_REV
   game.userEdited = (game.userEdited ?? []).filter((f) => f !== 'art')
   saveGame(game)
   broadcast()

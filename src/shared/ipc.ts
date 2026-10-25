@@ -10,11 +10,14 @@ import type {
   DownloadRequest,
   FeedConfig,
   Game,
+  GameModInfo,
   InstalledMod,
   LinkCapabilities,
   ManualGameInput,
   ModDetails,
   ModFileEntry,
+  ModSearchOptions,
+  ModSearchResponse,
   ModSearchResult,
   PluginInfo,
   Profile,
@@ -67,6 +70,12 @@ export interface IpcInvokeMap {
   'mods:files': (gameId: string, modId: string) => ModFileEntry[]
   'mods:rootCandidates': (gameId: string, modId: string) => string[]
   'mods:openFolder': (gameId: string, modId?: string) => void
+  /** Mods found in the game's folders (from the last scan; scans now when there is none yet). */
+  'mods:detected': (gameId: string) => GameModInfo
+  /** Every game's last mod scan, for library badges. */
+  'mods:detectedAll': () => Record<string, GameModInfo>
+  /** Scans one game (or all) for installed mods again. */
+  'mods:rescanInstalled': (gameId?: string) => Record<string, GameModInfo>
 
   'profiles:list': (gameId: string) => { profiles: Profile[]; activeId: string }
   'profiles:create': (gameId: string, name: string, cloneFrom?: string) => Profile
@@ -83,6 +92,8 @@ export interface IpcInvokeMap {
 
   'sources:list': () => SourceInfo[]
   'sources:search': (sourceId: string, query: string, gameId?: string) => ModSearchResult[]
+  /** Search with a sort order; says when the order had to be approximated. */
+  'sources:query': (sourceId: string, query: string, gameId?: string, opts?: ModSearchOptions) => ModSearchResponse
   'sources:details': (sourceId: string, modId: string, gameId?: string) => ModDetails
   'sources:bindings': (sourceId: string, gameId: string) => SourceGameBinding[]
   'sources:dependencies': (sourceId: string, modId: string, versionId: string | undefined, gameId?: string) => ResolvedDependency[]
@@ -106,6 +117,9 @@ export interface IpcInvokeMap {
   'accounts:signIn': (id: AccountId, register?: boolean) => AccountInfo
   'accounts:signOut': (id: AccountId) => AccountInfo[]
   'accounts:saveKey': (id: AccountId, key: string) => AccountInfo
+  /** Opens the site's API key page in the user's own browser and picks the key up from the clipboard. */
+  'accounts:browserKey': (id: AccountId) => AccountInfo
+  'accounts:cancelBrowserKey': (id: AccountId) => void
   'accounts:steamLogin': (req: SteamLoginRequest) => SteamLoginResponse
 
   'sitepanel:state': () => SitePanelState
@@ -114,6 +128,8 @@ export interface IpcInvokeMap {
   'sitepanel:hide': () => void
   'sitepanel:navigate': (action: 'back' | 'reload') => void
   'sitepanel:cancel': () => void
+  /** Opens the page shown in the panel in the user's own browser. */
+  'sitepanel:external': () => void
 }
 
 /** Events pushed from main to renderer. */
@@ -124,6 +140,8 @@ export interface IpcEventMap {
   'scan:progress': ScanProgress
   'deploy:progress': DeployProgress
   'mods:changed': { gameId: string }
+  /** A game's installed-mod scan finished. */
+  'mods:detected': GameModInfo
   'downloads:update': DownloadItem
   'sitepanel:state': SitePanelState
   'accounts:changed': AccountInfo[]
@@ -142,17 +160,18 @@ export const INVOKE_CHANNELS = [
   'library:list', 'library:scan', 'library:addManual', 'library:update', 'library:remove', 'library:launch', 'library:running',
   'library:fetchArtwork', 'library:detectExecutables', 'library:driveRoots',
   'mods:list', 'mods:installFiles', 'mods:remove', 'mods:update', 'mods:files', 'mods:rootCandidates', 'mods:openFolder',
+  'mods:detected', 'mods:detectedAll', 'mods:rescanInstalled',
   'profiles:list', 'profiles:create', 'profiles:rename', 'profiles:delete', 'profiles:setActive', 'profiles:save',
   'deploy:run', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
-  'sources:list', 'sources:search', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
+  'sources:list', 'sources:search', 'sources:query', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
   'sources:setFeeds', 'sources:plugins', 'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
   'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:clear',
-  'accounts:list', 'accounts:signIn', 'accounts:signOut', 'accounts:saveKey', 'accounts:steamLogin',
-  'sitepanel:state', 'sitepanel:bounds', 'sitepanel:show', 'sitepanel:hide', 'sitepanel:navigate', 'sitepanel:cancel'
+  'accounts:list', 'accounts:signIn', 'accounts:signOut', 'accounts:saveKey', 'accounts:browserKey', 'accounts:cancelBrowserKey', 'accounts:steamLogin',
+  'sitepanel:state', 'sitepanel:bounds', 'sitepanel:show', 'sitepanel:hide', 'sitepanel:navigate', 'sitepanel:cancel', 'sitepanel:external'
 ] as const satisfies readonly InvokeChannel[]
 
 export const EVENT_CHANNELS = [
-  'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'mods:changed', 'downloads:update', 'sitepanel:state',
+  'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'mods:changed', 'mods:detected', 'downloads:update', 'sitepanel:state',
   'accounts:changed', 'accounts:steamStatus', 'toast'
 ] as const satisfies readonly EventChannel[]
 

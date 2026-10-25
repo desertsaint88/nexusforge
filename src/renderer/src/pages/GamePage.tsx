@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock, FolderOpen, Layers, Play, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert } from 'lucide-react'
+import { Clock, FolderOpen, Layers, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert, Wrench } from 'lucide-react'
 import type { Game } from '@shared/types'
 import { useLibrary } from '../store/library'
 import { activeProfileOf, useMods } from '../store/mods'
 import { useNav, type GameTab } from '../store/ui'
 import { invoke, pathForFile } from '../lib/api'
 import { cn, formatBytes, formatPlaytime, relativeTime } from '../lib/format'
-import { Badge, Button, IconButton } from '../components/ui'
+import { Badge, IconButton, PlayButton } from '../components/ui'
 import { GameLogo, HeroArt } from '../components/GameArt'
 import { EmptyState, PlatformBadge, Tabs } from '../components/Chrome'
 import { ModsTab } from './game/ModsTab'
@@ -80,6 +80,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
   const load = useMods((s) => s.load)
   const install = useMods((s) => s.install)
   const deploying = useMods((s) => s.deploying[gameId])
+  const detectedInfo = useLibrary((s) => s.detected[gameId])
   const [current, setCurrent] = useState<GameTab>(tab ?? 'mods')
 
   useEffect(() => setCurrent(tab ?? 'mods'), [gameId, tab])
@@ -95,6 +96,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
   const enabled = profile?.enabled.length ?? 0
   const status = state?.status
   const conflictCount = state?.conflicts?.totalFiles ?? 0
+  const outside = detectedInfo?.mods.filter((m) => m.kind !== 'loader' && !m.managedModId).length ?? 0
 
   return (
     <div className="relative h-full overflow-y-auto">
@@ -104,7 +106,15 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
         <div className="mb-6 flex gap-3">
           <Stat icon={<Clock />} label="Playtime" value={formatPlaytime(game.playtimeMinutes)} />
           <Stat icon={<CalendarClock />} label="Last played" value={relativeTime(game.lastPlayed)} />
-          <Stat icon={<Puzzle />} label="Mods" value={state ? `${enabled} of ${state.mods.length} enabled` : '—'} />
+          <Stat
+            icon={<Puzzle />}
+            label="Mods"
+            value={
+              !state ? '—'
+              : !state.mods.length && outside ? `${outside} in the game folder`
+              : `${enabled} of ${state.mods.length} enabled${outside ? ` · +${outside} in folder` : ''}`
+            }
+          />
           <Stat
             icon={status?.deployed ? status.inSync ? <CircleCheck /> : <CircleAlert /> : <Rocket />}
             label="Deployment"
@@ -118,7 +128,12 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
           value={current}
           onChange={setCurrent}
           tabs={[
-            { value: 'mods', label: 'Mods', icon: <Layers />, badge: state?.mods.length ? <span className="text-[11px] text-ink-400 tabular-nums">{state.mods.length}</span> : undefined },
+            {
+              value: 'mods',
+              label: 'Mods',
+              icon: <Layers />,
+              badge: state?.mods.length || outside ? <span className="text-[11px] text-ink-400 tabular-nums">{(state?.mods.length ?? 0) + outside}</span> : undefined
+            },
             {
               value: 'conflicts',
               label: 'Conflicts',
@@ -146,7 +161,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
         {dropping && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-ink-950/70 backdrop-blur-md">
             <motion.div initial={{ scale: 0.94 }} animate={{ scale: 1 }} className="flex flex-col items-center gap-4 rounded-[32px] border-2 border-dashed border-[color-mix(in_oklab,var(--nf-accent)_60%,transparent)] px-20 py-14">
-              <div className="accent-gradient flex size-16 items-center justify-center rounded-3xl text-white shadow-[0_0_60px_-10px_var(--nf-accent)]">
+              <div className="accent-gradient flex size-16 items-center justify-center rounded-3xl border border-white/10 text-white">
                 <Upload className="size-7" />
               </div>
               <div className="text-xl font-semibold text-ink-100">Drop to install into {game.name}</div>
@@ -160,6 +175,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
 }
 
 function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game; running: boolean; onLaunch(): void; onFavorite(): void; onSettings(): void }) {
+  const modInfo = useLibrary((s) => s.detected[game.id])
   return (
     <div className="relative h-[340px] overflow-hidden">
       <motion.div initial={{ scale: 1.08, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} className="absolute inset-0">
@@ -177,13 +193,23 @@ function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game;
               </Badge>
             ) : null}
             {game.version && <Badge className="bg-black/40 font-mono backdrop-blur-md">v{game.version}</Badge>}
+            {modInfo &&
+              (modInfo.supported ? (
+                <Badge className="bg-black/40 backdrop-blur-md">
+                  <span title={modInfo.support.join('\n')} className="inline-flex items-center gap-1">
+                    <Wrench className="size-3" /> Mod support{modInfo.support[0] ? `: ${modInfo.support[0]}` : ''}
+                  </span>
+                </Badge>
+              ) : (
+                <Badge className="bg-black/40 text-ink-400 backdrop-blur-md">
+                  <span title={modInfo.support.join('\n') || 'No mod loader, mod folder or known mod setup found'}>No known mod support</span>
+                </Badge>
+              ))}
             {game.missing && <Badge tone="danger">Install folder missing</Badge>}
           </div>
           <GameLogo game={game} />
           <div className="mt-6 flex items-center gap-2">
-            <Button variant="primary" size="lg" className="min-w-[180px]" icon={<Play className="size-4.5 fill-current" />} onClick={onLaunch} disabled={running || game.missing}>
-              {running ? 'Running' : 'Launch game'}
-            </Button>
+            <PlayButton size="lg" className="min-w-[170px]" onClick={onLaunch} disabled={running || game.missing} label={running ? 'Running' : 'Play'} />
             <IconButton label={game.favorite ? 'Unfavorite' : 'Favorite'} onClick={onFavorite} className={cn('size-12 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md', game.favorite && 'text-amber-300')}>
               <Star className={cn('size-5', game.favorite && 'fill-current')} />
             </IconButton>

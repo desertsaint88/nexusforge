@@ -19,6 +19,7 @@ interface FileDetails {
   lifetime_subscriptions?: number
   subscriptions?: number
   favorited?: number
+  time_created?: number
   time_updated?: number
   tags?: Array<{ tag: string }>
 }
@@ -66,6 +67,7 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
     downloads: d.lifetime_subscriptions ?? d.subscriptions,
     endorsements: d.favorited,
     updatedAt: d.time_updated ? new Date(d.time_updated * 1000).toISOString() : undefined,
+    createdAt: d.time_created ? new Date(d.time_created * 1000).toISOString() : undefined,
     url: `https://steamcommunity.com/sharedfiles/filedetails/?id=${d.publishedfileid}`
   })
 
@@ -86,18 +88,32 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
       return []
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const app = await appId(gameId)
-      const key = `${app}|${query.trim().toLowerCase()}`
+      const q = query.trim()
+      const sort = opts?.sort ?? (q ? 'relevance' : 'downloads')
+      const key = `${app}|${q.toLowerCase()}|${sort}`
       const hit = searchCache.get(key)
       if (hit && Date.now() - hit.at < 3 * 60_000) return hit.results
-      const q = query.trim()
-      const url = `https://steamcommunity.com/workshop/browse/?appid=${app}&searchtext=${encodeURIComponent(q)}&browsesort=${q ? 'textsearch' : 'trend'}&section=readytouseitems&days=-1&numperpage=30`
+      // Steam's "Most popular" (trend) over a window: a week for trending, a month for recent downloads, all time otherwise.
+      const [browsesort, days] =
+        sort === 'relevance' ? [q ? 'textsearch' : 'trend', -1]
+        : sort === 'endorsed' ? ['toprated', -1]
+        : sort === 'downloads' ? ['totaluniquesubscribers', -1]
+        : sort === 'downloads_recent' ? ['trend', 30]
+        : sort === 'trending' ? ['trend', 7]
+        : sort === 'newest' ? ['mostrecent', -1]
+        : ['lastupdated', -1]
+      const url = `https://steamcommunity.com/workshop/browse/?appid=${app}&searchtext=${encodeURIComponent(q)}&browsesort=${browsesort}&section=readytouseitems&days=${days}&numperpage=30`
       const html = await ctx.text(url)
       if (/too many requests/i.test(html)) throw new Error('Steam is rate limiting Workshop searches. Wait a minute and try again.')
       const ids = [...new Set([...html.matchAll(/(?:filedetails\/\?id=|publishedfileid\\?"\s*:\s*\\?")(\d{6,})/g)].map((m) => m[1]))].slice(0, 30)
       const details = (await fileDetails(ctx, ids)).filter((d) => d.result === 1 && String(d.consumer_app_id) === app)
-      const results = details.map(toResult)
+      // Keep Steam's order (the page's order is the sort).
+      const rank = new Map(ids.map((id, i) => [id, i]))
+      const results = details.sort((a, b) => (rank.get(a.publishedfileid) ?? 0) - (rank.get(b.publishedfileid) ?? 0)).map(toResult)
       searchCache.set(key, { at: Date.now(), results })
       return results
     },

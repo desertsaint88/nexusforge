@@ -1,7 +1,7 @@
 import Store from 'electron-store'
 import { app, safeStorage } from 'electron'
 import { join } from 'node:path'
-import type { DownloadItem, Game, InstalledMod, Settings } from '@shared/types'
+import type { DownloadItem, Game, GameModInfo, InstalledMod, Settings } from '@shared/types'
 
 interface StoredSettings extends Omit<Settings, 'sources'> {
   /** apiKey is kept encrypted with the OS keychain (DPAPI on Windows). */
@@ -26,17 +26,22 @@ interface Schema {
   window: WindowState
   /** Signed-in account names per site (the keys themselves live encrypted in settings.sources). */
   accounts: Record<string, { user?: string; avatar?: string; detail?: string }>
+  /** Last installed-mod scan per game. */
+  detected: Record<string, GameModInfo>
+  /** One-time upgrade steps that already ran (name -> time). */
+  migrations: Record<string, number>
 }
 
 function defaultSettings(): StoredSettings {
   return {
-    accent: 'violet',
+    accent: 'graphite',
     reduceMotion: false,
     minimizeOnLaunch: false,
     autoFetchArtwork: true,
     scanPlatforms: { steam: true, epic: true, xbox: true, gog: true, custom: true },
     customFolders: [],
     scanAllDrives: true,
+    scanOnStartup: true,
     modStorageDir: join(app.getPath('userData'), 'mods'),
     defaultStrategy: 'symlink',
     dependencyMode: 'ask',
@@ -65,7 +70,9 @@ export function db(): Store<Schema> {
         activeProfiles: {},
         downloads: [],
         window: { width: 1440, height: 900, maximized: false },
-        accounts: {}
+        accounts: {},
+        detected: {},
+        migrations: {}
       }
     })
     // Merge in settings keys added in newer versions.
@@ -127,4 +134,12 @@ export function hasApiKey(sourceId: string): boolean {
 
 export function isSourceEnabled(sourceId: string): boolean {
   return db().get('settings').sources[sourceId]?.enabled ?? true
+}
+
+/** Runs `fn` once per installation (remembered under `name`). */
+export async function runOnce(name: string, fn: () => Promise<void>): Promise<void> {
+  const done = db().get('migrations') ?? {}
+  if (done[name]) return
+  await fn()
+  db().set('migrations', { ...(db().get('migrations') ?? {}), [name]: Date.now() })
 }

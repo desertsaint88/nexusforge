@@ -86,7 +86,7 @@ function NavItem({ icon, label, active, onClick, badge }: { icon: ReactNode; lab
       className={cn('group relative flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[13.5px] font-medium transition-colors', active ? 'text-ink-100' : 'text-ink-300 hover:text-ink-100')}
     >
       {active && <motion.span layoutId="nav-active" className="absolute inset-0 rounded-xl border border-white/[0.07] bg-white/[0.07]" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />}
-      {active && <motion.span layoutId="nav-bar" className="accent-gradient absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full" />}
+      {active && <motion.span layoutId="nav-bar" className="accent-line absolute top-3 bottom-3 left-0 w-[2px] rounded-full" />}
       <span className="relative [&>svg]:size-[18px]">{icon}</span>
       <span className="relative flex-1 text-left">{label}</span>
       {badge !== undefined && <span className="relative">{badge}</span>}
@@ -120,7 +120,7 @@ export function Sidebar() {
           label="Downloads"
           active={is('downloads')}
           onClick={() => navigate({ name: 'downloads' })}
-          badge={active.length ? <span className="accent-gradient flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white">{active.length}</span> : undefined}
+          badge={active.length ? <span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.08] px-1.5 text-[11px] font-bold text-ink-100">{active.length}</span> : undefined}
         />
         <NavItem
           icon={<UserRound />}
@@ -146,7 +146,7 @@ export function Sidebar() {
                 >
                   <GameIcon game={g} className="size-7" />
                   <span className="min-w-0 flex-1 truncate text-[13px]">{g.name}</span>
-                  {running.includes(g.id) && <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_10px] shadow-emerald-400" title="Running" />}
+                  {running.includes(g.id) && <span className="size-1.5 rounded-full bg-emerald-400/90" title="Running" />}
                 </button>
               )
             })}
@@ -179,7 +179,7 @@ export function Sidebar() {
 export function PlatformBadge({ platform, className }: { platform: string; className?: string }) {
   return (
     <span className={cn('inline-flex h-5.5 items-center gap-1.5 rounded-md border border-white/[0.08] bg-black/40 px-1.5 text-[11px] font-semibold text-ink-200 backdrop-blur-md', className)}>
-      <span className="size-1.5 rounded-full" style={{ background: PLATFORM_COLOR[platform] ?? '#999', boxShadow: `0 0 8px ${PLATFORM_COLOR[platform] ?? '#999'}` }} />
+      <span className="size-1.5 rounded-full opacity-80" style={{ background: PLATFORM_COLOR[platform] ?? '#999' }} />
       {PLATFORM_LABEL[platform] ?? platform}
     </span>
   )
@@ -223,7 +223,6 @@ export function EmptyState({ icon, title, message, children }: { icon: ReactNode
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center justify-center px-6 py-16 text-center">
       <div className="relative mb-5">
-        <div className="accent-gradient absolute inset-0 rounded-3xl opacity-40 blur-2xl" />
         <div className="glass relative flex size-16 items-center justify-center rounded-3xl text-ink-100 [&>svg]:size-7">{icon}</div>
       </div>
       <h3 className="text-lg font-semibold tracking-tight text-ink-100">{title}</h3>
@@ -245,7 +244,7 @@ export function Tabs<T extends string>({ value, onChange, tabs, id }: { value: T
           <span className="[&>svg]:size-4">{t.icon}</span>
           {t.label}
           {t.badge}
-          {value === t.value && <motion.span layoutId={`tab-${id}`} className="accent-gradient absolute inset-x-3 -bottom-px h-[2px] rounded-full" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />}
+          {value === t.value && <motion.span layoutId={`tab-${id}`} className="accent-line absolute inset-x-3 -bottom-px h-[2px] rounded-full" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />}
         </button>
       ))}
     </div>

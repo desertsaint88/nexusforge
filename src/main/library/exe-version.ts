@@ -95,6 +95,29 @@ function fixedVersion(block: Buffer): string | undefined {
   return parts.every((p) => p === 0) ? undefined : parts.join('.')
 }
 
+export interface VersionStrings {
+  productName?: string
+  fileDescription?: string
+  companyName?: string
+  version?: string
+}
+
+/** Name/description/version strings of an .exe or .dll (mod DLLs carry their name here too). */
+export async function readVersionStrings(file: string): Promise<VersionStrings | undefined> {
+  try {
+    const block = await versionResource(file)
+    if (!block) return undefined
+    return {
+      productName: stringValue(block, 'ProductName'),
+      fileDescription: stringValue(block, 'FileDescription'),
+      companyName: stringValue(block, 'CompanyName'),
+      version: stringValue(block, 'ProductVersion') ?? stringValue(block, 'FileVersion') ?? fixedVersion(block)
+    }
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * The game's own version from its executable. Engine executables that only carry the engine version
  * (Unity, Unreal) return undefined, because that number says nothing about the game build.

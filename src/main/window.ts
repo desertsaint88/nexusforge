@@ -33,7 +33,7 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 700,
     frame: false,
     show: false,
-    backgroundColor: '#08090c',
+    backgroundColor: '#030405',
     title: 'NexusForge',
     icon: join(import.meta.dirname, '../../resources/icon.png'),
     webPreferences: {

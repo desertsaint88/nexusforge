@@ -11,12 +11,13 @@ import { toast, useNav, type SettingsSection } from '../store/ui'
 import { Badge, Button, Card, Field, Input, Segmented, Toggle } from '../components/ui'
 import { Logo } from '../components/Chrome'
 
+// Same muted tones as styles.css.
 const ACCENTS: Array<{ value: AccentName; label: string; a: string; b: string }> = [
-  { value: 'violet', label: 'Violet', a: '#8b5cf6', b: '#22d3ee' },
-  { value: 'ember', label: 'Ember', a: '#f97316', b: '#f43f5e' },
-  { value: 'cyan', label: 'Cyan', a: '#06b6d4', b: '#6366f1' },
-  { value: 'emerald', label: 'Emerald', a: '#10b981', b: '#a3e635' },
-  { value: 'graphite', label: 'Graphite', a: '#9ca3af', b: '#e5e7eb' }
+  { value: 'graphite', label: 'Graphite', a: '#a3a6ae', b: '#6f727a' },
+  { value: 'violet', label: 'Dusk', a: '#8e88c2', b: '#6c7aa3' },
+  { value: 'cyan', label: 'Steel', a: '#6fa2b1', b: '#7480aa' },
+  { value: 'emerald', label: 'Moss', a: '#6fa68b', b: '#8ea86e' },
+  { value: 'ember', label: 'Ember', a: '#c08a66', b: '#a56c6c' }
 ]
 
 function Row({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -48,14 +49,14 @@ function General({ s, update }: { s: Settings; update(p: Partial<Settings>): voi
   return (
     <div className="space-y-4">
       <Panel title="Appearance" icon={<Palette />}>
-        <Row title="Accent color" description="Used for highlights, buttons and the ambient glow.">
+        <Row title="Accent tone" description="A muted tint for selections, focus rings and progress. Everything else stays dark.">
           <div className="flex gap-2">
             {ACCENTS.map((a) => (
               <button
                 key={a.value}
                 onClick={() => update({ accent: a.value })}
                 title={a.label}
-                className={cn('relative size-9 rounded-xl transition-transform hover:scale-110', s.accent === a.value && 'ring-2 ring-white/80 ring-offset-2 ring-offset-ink-900')}
+                className={cn('relative size-8 rounded-lg border border-white/10 transition-transform hover:scale-105', s.accent === a.value && 'ring-2 ring-white/60 ring-offset-2 ring-offset-ink-900')}
                 style={{ background: `linear-gradient(135deg, ${a.a}, ${a.b})` }}
               />
             ))}
@@ -115,7 +116,13 @@ function LibrarySettings({ s, update }: { s: Settings; update(p: Partial<Setting
             <Toggle checked={s.scanPlatforms[p.key]} onChange={(v) => update({ scanPlatforms: { ...s.scanPlatforms, [p.key]: v } })} />
           </Row>
         ))}
-        <Row title="Fetch artwork from the Steam store" description="For games outside Steam, NexusForge looks up the game name on the Steam store to get cover art. Only the name is sent.">
+        <Row title="Scan when NexusForge starts" description="Looks for new games and for the mods installed in every game (also ones installed by hand or by other tools) each time NexusForge opens.">
+          <Toggle checked={s.scanOnStartup} onChange={(v) => update({ scanOnStartup: v })} />
+        </Row>
+        <Row
+          title="Fetch artwork from the Steam store"
+          description="NexusForge looks up each game on the Steam store (by its name, or its Steam app id) for cover art and checks that every picture loads. Only the name is sent. Pictures in a game's own folder (cover.jpg, banner.png) are used when the store has none."
+        >
           <Toggle checked={s.autoFetchArtwork} onChange={(v) => update({ autoFetchArtwork: v })} />
         </Row>
       </Panel>

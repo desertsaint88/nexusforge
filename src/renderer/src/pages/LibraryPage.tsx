@@ -1,20 +1,40 @@
 import { memo, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Clock, FolderSearch, Gamepad2, Layers, Play, Plus, RefreshCw, Star, Puzzle } from 'lucide-react'
-import type { Game, Platform } from '@shared/types'
-import { useLibrary, visibleGames } from '../store/library'
+import { Clock, FolderSearch, Gamepad2, Layers, Plus, RefreshCw, Star, Puzzle, Wrench } from 'lucide-react'
+import type { Game, GameModInfo, Platform } from '@shared/types'
+import { installedCount, useLibrary, visibleGames } from '../store/library'
 import { useNav } from '../store/ui'
 import { cn, formatPlaytime, PLATFORM_LABEL, relativeTime } from '../lib/format'
-import { Badge, Button, SearchInput } from '../components/ui'
+import { Badge, Button, PlayButton, SearchInput } from '../components/ui'
 import { Select } from '../components/Popover'
 import { CapsuleArt, GameLogo, HeroArt } from '../components/GameArt'
 import { EmptyState, PlatformBadge } from '../components/Chrome'
 import { AddGameModal } from '../modals/AddGameModal'
 
-type Filter = 'all' | 'favorites' | 'modded' | Platform | 'hidden'
+type Filter = 'all' | 'favorites' | 'modded' | 'moddable' | Platform | 'hidden'
 type Sort = 'name' | 'recent' | 'playtime' | 'mods'
 
-const GameCard = memo(function GameCard({ game, mods, running, index }: { game: Game; mods: number; running: boolean; index: number }) {
+/** Top-left of a cover: how many mods the game has, or that it can be modded. */
+function ModBadge({ mods, info }: { mods: number; info?: GameModInfo }) {
+  const why = info?.support.join(' · ')
+  if (mods > 0)
+    return (
+      <span title={`${mods} mod${mods === 1 ? '' : 's'} installed${why ? `\n${why}` : ''}`} className="inline-flex h-5.5 items-center gap-1 rounded-md border border-white/[0.12] bg-black/65 px-1.5 text-[11px] font-semibold text-ink-100 backdrop-blur-md">
+        <Puzzle className="size-3" />
+        {mods}
+      </span>
+    )
+  if (info?.supported)
+    return (
+      <span title={why} className="inline-flex h-5.5 items-center gap-1 rounded-md border border-white/[0.08] bg-black/55 px-1.5 text-[10.5px] font-medium text-ink-300 backdrop-blur-md">
+        <Wrench className="size-3" />
+        Mod support
+      </span>
+    )
+  return <span />
+}
+
+const GameCard = memo(function GameCard({ game, mods, info, running, index }: { game: Game; mods: number; info?: GameModInfo; running: boolean; index: number }) {
   const navigate = useNav((s) => s.navigate)
   const launch = useLibrary((s) => s.launch)
   const update = useLibrary((s) => s.update)
@@ -28,19 +48,12 @@ const GameCard = memo(function GameCard({ game, mods, running, index }: { game: 
     >
       <button
         onClick={() => navigate({ name: 'game', gameId: game.id })}
-        className="relative block aspect-[2/3] w-full overflow-hidden rounded-2xl border border-white/[0.06] bg-ink-850 text-left shadow-[0_10px_30px_-10px_rgba(0,0,0,0.8)] transition-all duration-300 ease-[var(--ease-spring)] group-hover:-translate-y-1.5 group-hover:border-white/[0.16] group-hover:shadow-[0_24px_50px_-12px_rgba(0,0,0,0.9),0_0_0_1px_color-mix(in_oklab,var(--nf-accent)_30%,transparent),0_10px_60px_-20px_var(--nf-accent)]"
+        className="relative block aspect-[2/3] w-full overflow-hidden rounded-2xl border border-white/[0.05] bg-ink-850 text-left shadow-[0_10px_30px_-12px_rgba(0,0,0,0.9)] transition-all duration-300 ease-[var(--ease-spring)] group-hover:-translate-y-1 group-hover:border-white/[0.14] group-hover:shadow-[0_24px_50px_-14px_rgba(0,0,0,1)]"
       >
-        <CapsuleArt game={game} className="absolute inset-0 transition-transform duration-500 ease-[var(--ease-spring)] group-hover:scale-[1.04]" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/25 to-transparent opacity-90 transition-opacity group-hover:opacity-100" />
+        <CapsuleArt game={game} className="absolute inset-0 transition-transform duration-500 ease-[var(--ease-spring)] group-hover:scale-[1.03]" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-transparent opacity-90 transition-opacity group-hover:opacity-100" />
         <div className="absolute inset-x-0 top-0 flex items-start justify-between p-2.5">
-          {mods > 0 ? (
-            <Badge tone="accent" className="bg-black/50 backdrop-blur-md">
-              <Puzzle className="size-3" />
-              {mods}
-            </Badge>
-          ) : (
-            <span />
-          )}
+          <ModBadge mods={mods} info={info} />
           {running && (
             <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-1.5 py-0.5 text-[10.5px] font-bold text-emerald-300 backdrop-blur-md">
               <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" /> RUNNING
@@ -56,14 +69,7 @@ const GameCard = memo(function GameCard({ game, mods, running, index }: { game: 
         </div>
       </button>
       <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center gap-2 transition-all duration-300 group-hover:bottom-3.5">
-        <button
-          onClick={() => void launch(game.id)}
-          disabled={running || game.missing}
-          className="accent-gradient pointer-events-auto flex h-9 flex-1 items-center justify-center gap-2 rounded-xl border border-white/20 text-[13px] font-semibold text-white shadow-[0_6px_24px_-6px_var(--nf-accent)] transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
-        >
-          <Play className="size-3.5 fill-current" />
-          {game.missing ? 'Missing' : running ? 'Running' : 'Play'}
-        </button>
+        <PlayButton size="sm" className="pointer-events-auto flex-1" onClick={() => void launch(game.id)} disabled={running || game.missing} label={game.missing ? 'Missing' : running ? 'Running' : 'Play'} />
         <button
           onClick={() => void update(game.id, { favorite: !game.favorite })}
           className={cn(
@@ -90,11 +96,11 @@ function ContinuePlaying({ game }: { game: Game }) {
       className="relative mb-8 h-[240px] overflow-hidden rounded-3xl border border-white/[0.07] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.9)]"
     >
       <HeroArt game={game} />
-      <div className="absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/75 to-transparent" />
-      <div className="absolute inset-0 bg-gradient-to-t from-ink-950/80 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/80 to-ink-950/20" />
+      <div className="absolute inset-0 bg-gradient-to-t from-ink-950/90 to-transparent" />
       <div className="relative flex h-full flex-col justify-end p-8">
         <div className="mb-3 flex items-center gap-2">
-          <Badge tone="accent">
+          <Badge className="bg-black/40 backdrop-blur-md">
             <Clock className="size-3" /> Continue playing
           </Badge>
           <PlatformBadge platform={game.platform} />
@@ -104,9 +110,7 @@ function ContinuePlaying({ game }: { game: Game }) {
           {formatPlaytime(game.playtimeMinutes)} played · last {relativeTime(game.lastPlayed)}
         </div>
         <div className="mt-5 flex gap-2">
-          <Button variant="primary" size="lg" icon={<Play className="size-4 fill-current" />} onClick={() => void launch(game.id)} disabled={running}>
-            {running ? 'Running' : 'Play'}
-          </Button>
+          <PlayButton size="lg" onClick={() => void launch(game.id)} disabled={running} label={running ? 'Running' : 'Play'} />
           <Button size="lg" variant="secondary" icon={<Layers className="size-4" />} onClick={() => navigate({ name: 'game', gameId: game.id })}>
             Manage mods
           </Button>
@@ -117,7 +121,7 @@ function ContinuePlaying({ game }: { game: Game }) {
 }
 
 export function LibraryPage() {
-  const { games, running, scanning, scan, modCounts, loaded } = useLibrary()
+  const { games, running, scanning, scan, modCounts, detected, loaded } = useLibrary()
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [sort, setSort] = useState<Sort>('recent')
@@ -127,6 +131,10 @@ export function LibraryPage() {
   const platforms = useMemo(() => [...new Set(visible.map((g) => g.platform))], [visible])
   const hiddenCount = games.length - visible.length
 
+  const counts = useMemo(() => Object.fromEntries(games.map((g) => [g.id, installedCount(g.id, modCounts, detected)])), [games, modCounts, detected])
+  const moddable = visible.filter((g) => detected[g.id]?.supported || (counts[g.id] ?? 0) > 0).length
+  const modded = visible.filter((g) => (counts[g.id] ?? 0) > 0).length
+
   const list = useMemo(() => {
     const q = query.trim().toLowerCase()
     const base = filter === 'hidden' ? games.filter((g) => g.hidden) : visible
@@ -135,23 +143,25 @@ export function LibraryPage() {
       .filter((g) => {
         if (filter === 'all' || filter === 'hidden') return true
         if (filter === 'favorites') return g.favorite
-        if (filter === 'modded') return (modCounts[g.id] ?? 0) > 0
+        if (filter === 'modded') return (counts[g.id] ?? 0) > 0
+        if (filter === 'moddable') return Boolean(detected[g.id]?.supported) || (counts[g.id] ?? 0) > 0
         return g.platform === filter
       })
       .sort((a, b) => {
         if (sort === 'name') return a.name.localeCompare(b.name)
         if (sort === 'playtime') return b.playtimeMinutes - a.playtimeMinutes
-        if (sort === 'mods') return (modCounts[b.id] ?? 0) - (modCounts[a.id] ?? 0) || a.name.localeCompare(b.name)
+        if (sort === 'mods') return (counts[b.id] ?? 0) - (counts[a.id] ?? 0) || a.name.localeCompare(b.name)
         return (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.name.localeCompare(b.name)
       })
-  }, [games, visible, query, filter, sort, modCounts])
+  }, [games, visible, query, filter, sort, counts, detected])
 
   const recent = useMemo(() => [...visible].filter((g) => g.lastPlayed && !g.missing).sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))[0], [visible])
 
   const chips: Array<{ value: Filter; label: string }> = [
     { value: 'all', label: 'All games' },
     { value: 'favorites', label: 'Favorites' },
-    { value: 'modded', label: 'Modded' },
+    { value: 'moddable', label: `Mod support${moddable ? ` (${moddable})` : ''}` },
+    { value: 'modded', label: `Modded${modded ? ` (${modded})` : ''}` },
     ...platforms.map((p) => ({ value: p as Filter, label: PLATFORM_LABEL[p] })),
     ...(hiddenCount ? [{ value: 'hidden' as Filter, label: `Hidden (${hiddenCount})` }] : [])
   ]
@@ -163,6 +173,7 @@ export function LibraryPage() {
           <h1 className="text-[28px] font-bold tracking-tight text-ink-100">Library</h1>
           <p className="mt-0.5 text-[13.5px] text-ink-300">
             {visible.length} game{visible.length === 1 ? '' : 's'} across {platforms.length || 0} source{platforms.length === 1 ? '' : 's'}
+            {moddable > 0 && ` · ${moddable} with mod support · ${modded} modded`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -217,7 +228,7 @@ export function LibraryPage() {
       ) : list.length ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-5">
           {list.map((g, i) => (
-            <GameCard key={g.id} game={g} mods={modCounts[g.id] ?? 0} running={running.includes(g.id)} index={i} />
+            <GameCard key={g.id} game={g} mods={counts[g.id] ?? 0} info={detected[g.id]} running={running.includes(g.id)} index={i} />
           ))}
         </div>
       ) : visible.length ? (

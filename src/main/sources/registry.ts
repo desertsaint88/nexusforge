@@ -1,5 +1,18 @@
 import { shell } from 'electron'
-import type { FeedConfig, ModDependency, ModDetails, ModSearchResult, PluginInfo, ResolvedDependency, SourceGameBinding, SourceInfo } from '@shared/types'
+import type {
+  FeedConfig,
+  ModDependency,
+  ModDetails,
+  ModSearchOptions,
+  ModSearchResponse,
+  ModSearchResult,
+  ModSort,
+  PluginInfo,
+  ResolvedDependency,
+  SourceGameBinding,
+  SourceInfo
+} from '@shared/types'
+import { sortResults } from '@shared/sort'
 import type { AdapterContext, DownloadPlan, ModSourceAdapter } from './types'
 import { httpJson, httpText } from './http'
 import { createThunderstoreAdapter } from './thunderstore'
@@ -124,7 +137,8 @@ export function listSources(): SourceInfo[] {
       hasKey: adapter.apiKey ? hasApiKey(adapter.id) : undefined,
       homepage: adapter.homepage,
       bindingLabel: adapter.bindingLabel,
-      apiKeyUrl: adapter.apiKeyUrl
+      apiKeyUrl: adapter.apiKeyUrl,
+      sorts: adapter.sorts
     })
   }
   return out
@@ -152,6 +166,25 @@ async function guarded<T>(id: string, what: string, fn: (a: ModSourceAdapter) =>
 export async function searchSource(id: string, query: string, gameId?: string): Promise<ModSearchResult[]> {
   const results = await guarded(id, 'search', (a) => a.search(query, gameId))
   return results.map((r) => ({ ...r, sourceId: id }))
+}
+
+/**
+ * Search in a given order. Sources that can't produce the order themselves get their (default) results
+ * sorted here, and the response says so.
+ */
+export async function querySource(id: string, query: string, gameId?: string, opts: ModSearchOptions = {}): Promise<ModSearchResponse> {
+  const adapter = adapterFor(id)
+  const sort: ModSort = opts.sort ?? (query.trim() ? 'relevance' : 'endorsed')
+  const native = sort === 'relevance' || (adapter.sorts?.includes(sort) ?? false)
+  const raw = await guarded(id, 'search', (a) => a.search(query, gameId, native ? { sort } : {}))
+  const results = raw.map((r) => ({ ...r, sourceId: id }))
+  if (native && !results.length && sort !== 'relevance') {
+    // Some sites return nothing for an order on quiet games (ModDB's rating list needs rated mods): fall back
+    // to their default list, sorted here.
+    const fallback = (await guarded(id, 'search', (a) => a.search(query, gameId, {}))).map((r) => ({ ...r, sourceId: id }))
+    if (fallback.length) return { results: sortResults(fallback, sort), sort, approximate: true }
+  }
+  return native ? { results, sort } : { results: sortResults(results, sort), sort, approximate: true }
 }
 
 export async function sourceDetails(id: string, modId: string, gameId?: string): Promise<ModDetails> {

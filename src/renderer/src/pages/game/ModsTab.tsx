@@ -5,6 +5,7 @@ import { Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil
 import type { Game, InstalledMod } from '@shared/types'
 import { missingRequirements } from '@shared/deps'
 import { activeProfileOf, useMods } from '../../store/mods'
+import { useLibrary } from '../../store/library'
 import { confirm, useNav } from '../../store/ui'
 import { invoke } from '../../lib/api'
 import { cn, formatBytes, relativeTime } from '../../lib/format'
@@ -12,6 +13,7 @@ import { Badge, Button, ProgressBar, SearchInput, Toggle } from '../../component
 import { MenuItem, MenuSeparator, Popover, Select } from '../../components/Popover'
 import { EmptyState } from '../../components/Chrome'
 import { ModSettingsModal } from '../../modals/ModSettingsModal'
+import { DetectedMods } from './DetectedMods'
 
 const SOURCE_LABEL: Record<string, string> = {
   nexus: 'Nexus',
@@ -52,6 +54,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
   const perMod = state?.conflicts?.perMod ?? {}
   const enabledSet = useMemo(() => new Set(profile?.enabled ?? []), [profile?.enabled])
   const status = state?.status
+  const outsideCount = useLibrary((s) => s.detected[game.id]?.mods.filter((m) => m.kind !== 'loader' && !m.managedModId).length ?? 0)
 
   const onDragEnd = (r: DropResult) => {
     if (!r.destination || r.destination.index === r.source.index) return
@@ -105,7 +108,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
           icon={<Rocket className="size-4" />}
           onClick={() => void deploy(game.id)}
           loading={Boolean(deploying)}
-          className={cn(needsDeploy && !deploying && 'ring-2 ring-[color-mix(in_oklab,var(--nf-accent)_45%,transparent)] ring-offset-2 ring-offset-ink-950')}
+          className={cn(needsDeploy && !deploying && 'ring-1 ring-[color-mix(in_oklab,var(--nf-accent)_55%,transparent)] ring-offset-2 ring-offset-ink-950')}
         >
           {deploying ? 'Deploying…' : needsDeploy ? 'Deploy changes' : 'Deploy'}
         </Button>
@@ -185,9 +188,10 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
       {!ordered.length ? (
         <EmptyState
           icon={<PackagePlus />}
-          title="No mods yet"
+          title={outsideCount ? 'No mods managed by NexusForge yet' : 'No mods yet'}
           message={
             <>
+              {outsideCount ? `${outsideCount} mod${outsideCount === 1 ? ' is' : 's are'} already installed in the game folder (listed below). ` : ''}
               Drop mod archives anywhere on this window, install from a file, or browse online sources. Mods are kept in NexusForge's storage and linked into{' '}
               <span className="font-mono text-ink-200">{game.modding.targetDir}</span> when you deploy.
             </>
@@ -229,7 +233,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                             className={cn(
                               'grid grid-cols-[28px_36px_40px_minmax(0,1fr)_120px_90px_36px] items-center gap-3 rounded-2xl border px-4 py-2.5 transition-[background,border-color,box-shadow,opacity]',
                               snap.isDragging
-                                ? 'glass-strong border-[color-mix(in_oklab,var(--nf-accent)_50%,transparent)] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.9),0_0_40px_-15px_var(--nf-accent)]'
+                                ? 'glass-strong border-white/[0.16] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.95)]'
                                 : 'border-white/[0.05] bg-white/[0.025] hover:border-white/[0.1] hover:bg-white/[0.045]',
                               !on && !snap.isDragging && 'opacity-55'
                             )}
@@ -332,6 +336,8 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
           <p className="mt-4 text-[12px] text-ink-400">Drag to change the load order. Mods lower in the list win when two mods contain the same file.</p>
         </>
       )}
+
+      <DetectedMods game={game} />
 
       <ModSettingsModal game={game} mod={editing} onClose={() => setEditing(undefined)} />
     </div>

@@ -3,6 +3,7 @@
 // user is signed in, NexusForge reads their personal API key from the site's key page and checks it against the
 // site's API, so nobody has to copy keys around. Steam is different: SteamCMD signs in with name + password once.
 
+import { clipboard, shell } from 'electron'
 import type { AccountId, AccountInfo, SteamLoginRequest, SteamLoginResponse } from '@shared/types'
 import { db, getApiKey, getSettings, setSettings } from '../store'
 import { emit, toast } from '../events'
@@ -257,6 +258,86 @@ return { keys, loggedOut, canCreate };
 })()`
 }
 
+/**
+ * Watches the clipboard for something that looks like the site's API key (copied from the user's own browser)
+ * and hands each new candidate to `onKey`. Only strings matching the key pattern are looked at.
+ */
+function watchClipboard(def: WebAccount, onKey: (key: string) => Promise<boolean>): () => void {
+  const pattern = new RegExp(`^\\s*(${def.keyPattern})\\s*$`)
+  const seen = new Set<string>()
+  let checking = false
+  const timer = setInterval(async () => {
+    if (checking) return
+    checking = true
+    try {
+      const text = String(await clipboard.readText()).slice(0, 600)
+      const key = text.match(pattern)?.[1]
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      await onKey(key)
+    } catch {
+      // clipboard busy; next tick
+    } finally {
+      checking = false
+    }
+  }, 900)
+  return () => clearInterval(timer)
+}
+
+const browserFlows = new Map<AccountId, { cancel(): void; promise: Promise<AccountInfo> }>()
+
+/**
+ * Sign-in through the user's own browser, for when a site's bot check refuses NexusForge's window (or the user is
+ * already signed in there): opens the key page externally and finishes as soon as the key is copied.
+ */
+export function browserKeySignIn(id: AccountId): Promise<AccountInfo> {
+  if (id === 'steam') throw new Error('Steam signs in with your user name and password.')
+  const running = browserFlows.get(id)
+  if (running) return running.promise
+  const def = webDef(id)
+  let cancel = () => {}
+  const promise = new Promise<AccountInfo>((resolve, reject) => {
+    const stop = watchClipboard(def, async (key) => {
+      try {
+        const profile = await acceptKey(def, key)
+        finish()
+        log.info(`${def.name}: signed in through the browser${profile.user ? ` as ${profile.user}` : ''}`)
+        toast('success', `Signed in to ${def.name}`, profile.user ? `as ${profile.user}. ${profile.detail ?? ''}` : profile.detail)
+        resolve(info(def))
+        return true
+      } catch (err) {
+        log.warn(`${def.name}: copied key not accepted (${(err as Error).message})`)
+        toast('warning', `${def.name} did not accept the copied key`, 'Copy the whole key (the copy button next to it), or create a new one.')
+        return false
+      }
+    })
+    const timeout = setTimeout(() => {
+      finish()
+      reject(new Error('No API key was copied within 10 minutes.'))
+    }, 10 * 60_000)
+    const finish = () => {
+      stop()
+      clearTimeout(timeout)
+      browserFlows.delete(id)
+      busy.delete(id)
+      publish()
+    }
+    cancel = () => {
+      finish()
+      reject(new Error('Sign-in cancelled'))
+    }
+  })
+  browserFlows.set(id, { cancel: () => cancel(), promise })
+  busy.add(id)
+  publish()
+  void shell.openExternal(def.keyPageUrl)
+  return promise
+}
+
+export function cancelBrowserKeySignIn(id: AccountId): void {
+  browserFlows.get(id)?.cancel()
+}
+
 const pending = new Map<AccountId, Promise<AccountInfo>>()
 
 /**
@@ -280,7 +361,7 @@ export function signIn(id: AccountId, register = false): Promise<AccountInfo> {
 function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> {
   return new Promise<AccountInfo>((resolve, reject) => {
     const panelId = `account:${def.id}`
-    const view = siteView(def.partition)
+    const view = siteView(def.partition, panelId)
     const wc = view.webContents
     let done = false
     const tried = new Set<string>()
@@ -290,10 +371,24 @@ function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> 
     busy.add(def.id)
     publish()
 
+    // If the user finishes in their own browser instead ("Open in my browser"), the copied key completes this too.
+    const stopClipboard = watchClipboard(def, async (key) => {
+      if (done) return false
+      try {
+        const profile = await acceptKey(def, key)
+        toast('success', `Signed in to ${def.name}`, profile.user ? `as ${profile.user}. ${profile.detail ?? ''}` : profile.detail)
+        finish(undefined, info(def))
+        return true
+      } catch {
+        return false
+      }
+    })
+
     const finish = (err?: Error, result?: AccountInfo) => {
       if (done) return
       done = true
       clearInterval(timer)
+      stopClipboard()
       removePanelEntry(panelId)
       if (err) reject(err)
       else resolve(result!)

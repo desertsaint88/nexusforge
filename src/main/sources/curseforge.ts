@@ -1,4 +1,4 @@
-import type { ModDependency, ModDetails, ModSearchResult, ModVersion, SourceGameBinding } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult, ModSort, ModVersion, SourceGameBinding } from '@shared/types'
 import type { AdapterContext, DownloadPlan, ModSourceAdapter } from './types'
 import { gameNameVariants, nameScore, toPlainText } from './http'
 
@@ -13,6 +13,7 @@ interface CfMod {
   downloadCount: number
   thumbsUpCount?: number
   dateModified: string
+  dateCreated?: string
   links?: { websiteUrl?: string }
   authors?: Array<{ name: string }>
   logo?: { thumbnailUrl?: string; url?: string }
@@ -59,6 +60,7 @@ export function createCurseForgeAdapter(ctx: AdapterContext): ModSourceAdapter {
       downloads: m.downloadCount,
       endorsements: m.thumbsUpCount,
       updatedAt: m.dateModified,
+      createdAt: m.dateCreated,
       url: m.links?.websiteUrl
     }
   }
@@ -96,10 +98,15 @@ export function createCurseForgeAdapter(ctx: AdapterContext): ModSourceAdapter {
         .map(({ g }) => ({ value: String(g.id), label: g.name }))
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const g = await ctx.binding(gameId)
       if (!g) throw new Error(gameId ? 'This game is not on CurseForge, or choose it in the game settings.' : 'Pick a game to search CurseForge.')
-      const res = await get<{ data: CfMod[] }>(`/mods/search?gameId=${g}&searchFilter=${encodeURIComponent(query.trim())}&sortField=${query.trim() ? 1 : 6}&sortOrder=desc&pageSize=48`)
+      // CurseForge sort fields: 1 featured, 2 popularity (recent downloads), 3 last updated, 6 total downloads, 11 released, 12 rating.
+      const FIELD: Record<ModSort, number> = { relevance: 1, endorsed: 12, downloads: 6, downloads_recent: 2, trending: 2, newest: 11, updated: 3 }
+      const field = FIELD[opts?.sort ?? (query.trim() ? 'relevance' : 'downloads')]
+      const res = await get<{ data: CfMod[] }>(`/mods/search?gameId=${g}&searchFilter=${encodeURIComponent(query.trim())}&sortField=${field}&sortOrder=desc&pageSize=48`)
       return res.data.map(toResult)
     },
 

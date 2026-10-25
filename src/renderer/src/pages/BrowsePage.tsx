@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CircleAlert, Compass, Download, Gamepad2, KeyRound, LogIn, Settings, ThumbsUp, Clock } from 'lucide-react'
+import { ArrowDownWideNarrow, CircleAlert, CircleCheck, Compass, Download, Gamepad2, KeyRound, LogIn, Settings, ThumbsUp, Clock, Info } from 'lucide-react'
 import { accountForSource, ensureSignedIn } from '../store/accounts'
-import type { ModSearchResult, SourceGameBinding, SourceInfo } from '@shared/types'
-import { invoke } from '../lib/api'
+import type { InstalledMod, ModSearchResult, ModSort, SourceGameBinding, SourceInfo } from '@shared/types'
+import { SORT_LABEL } from '@shared/sort'
+import { installedIndex, isInstalled } from '@shared/installed'
+import { invoke, on } from '../lib/api'
 import { cn, formatCount, relativeTime } from '../lib/format'
 import { useLibrary, visibleGames } from '../store/library'
 import { useNav } from '../store/ui'
@@ -13,7 +15,10 @@ import { EmptyState } from '../components/Chrome'
 import { GameIcon } from '../components/GameArt'
 import { ModDetailsModal } from '../modals/ModDetailsModal'
 
-function ResultCard({ mod, index, onOpen }: { mod: ModSearchResult; index: number; onOpen(): void }) {
+const SORTS: ModSort[] = ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated']
+const SORT_KEY = 'nf.browse.sort'
+
+function ResultCard({ mod, index, installed, onOpen }: { mod: ModSearchResult; index: number; installed: boolean; onOpen(): void }) {
   const [failed, setFailed] = useState(false)
   return (
     <motion.button
@@ -21,9 +26,17 @@ function ResultCard({ mod, index, onOpen }: { mod: ModSearchResult; index: numbe
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index, 20) * 0.02, type: 'spring', stiffness: 260, damping: 26 }}
       onClick={onOpen}
-      className="group glass flex flex-col overflow-hidden rounded-2xl text-left transition-all duration-300 hover:-translate-y-1 hover:border-white/[0.14] hover:shadow-[0_20px_50px_-15px_rgba(0,0,0,0.9),0_0_40px_-20px_var(--nf-accent)]"
+      className={cn(
+        'group glass flex flex-col overflow-hidden rounded-2xl text-left transition-all duration-300 hover:-translate-y-0.5 hover:border-white/[0.13] hover:shadow-[0_20px_50px_-15px_rgba(0,0,0,0.95)]',
+        installed && 'border-emerald-300/[0.14]'
+      )}
     >
       <div className="relative aspect-[16/9] overflow-hidden bg-ink-850">
+        {installed && (
+          <span className="absolute top-2 left-2 z-10 inline-flex h-5.5 items-center gap-1 rounded-md border border-emerald-300/20 bg-black/70 px-1.5 text-[11px] font-semibold text-emerald-200 backdrop-blur-md">
+            <CircleCheck className="size-3" /> Installed
+          </span>
+        )}
         {mod.thumbnail && !failed ? (
           <>
             <img src={mod.thumbnail} alt="" onError={() => setFailed(true)} className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-xl" draggable={false} />
@@ -73,7 +86,19 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState<ModSearchResult | undefined>()
   const [attempt, setAttempt] = useState(0)
+  const [sortPref, setSortPref] = useState<ModSort>(() => {
+    const saved = localStorage.getItem(SORT_KEY) as ModSort | null
+    return saved && SORTS.includes(saved) ? saved : 'endorsed'
+  })
+  const [approximate, setApproximate] = useState(false)
+  const [installedOnly, setInstalledOnly] = useState(false)
   const seq = useRef(0)
+  // "Best match" only means something while searching.
+  const sort: ModSort = sortPref === 'relevance' && !query.trim() ? 'endorsed' : sortPref
+  const chooseSort = (s: ModSort) => {
+    setSortPref(s)
+    localStorage.setItem(SORT_KEY, s)
+  }
 
   useEffect(() => {
     void invoke('sources:list').then((list) => {
@@ -115,8 +140,12 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
     setError(undefined)
     const t = setTimeout(
       () => {
-        invoke('sources:search', sourceId, query, gameId)
-          .then((r) => mySeq === seq.current && setResults(r))
+        invoke('sources:query', sourceId, query, gameId, { sort })
+          .then((r) => {
+            if (mySeq !== seq.current) return
+            setResults(r.results)
+            setApproximate(Boolean(r.approximate))
+          })
           .catch((err: Error) => {
             if (mySeq !== seq.current) return
             setResults([])
@@ -127,7 +156,31 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
       query ? 380 : 0
     )
     return () => clearTimeout(t)
-  }, [sourceId, query, gameId, chosenBinding, attempt])
+  }, [sourceId, query, gameId, chosenBinding, attempt, sort])
+
+  // What's installed in the chosen game: NexusForge's mods and the ones found in its folders.
+  const detected = useLibrary((s) => (gameId ? s.detected[gameId] : undefined))
+  const [managed, setManaged] = useState<InstalledMod[]>([])
+  useEffect(() => {
+    setManaged([])
+    if (!gameId) return
+    let live = true
+    const load = () => void invoke('mods:list', gameId).then((m) => live && setManaged(m), () => {})
+    load()
+    const off = on('mods:changed', (e) => e.gameId === gameId && load())
+    return () => {
+      live = false
+      off()
+    }
+  }, [gameId])
+  const index = useMemo(() => installedIndex(managed, detected?.mods ?? []), [managed, detected])
+  const shownResults = useMemo(() => (results && installedOnly ? results.filter((r) => isInstalled(index, r)) : results), [results, installedOnly, index])
+  const installedHere = useMemo(() => (results ?? []).filter((r) => isInstalled(index, r)).length, [results, index])
+  const sortOptions = SORTS.filter((s) => s !== 'relevance' || query.trim()).map((s) => ({
+    value: s,
+    label: SORT_LABEL[s],
+    hint: source?.sorts && s !== 'relevance' && !source.sorts.includes(s) ? 'approx.' : undefined
+  }))
 
   const gameOptions = useMemo(() => games.map((g) => ({ value: g.id, label: g.name, icon: <GameIcon game={g} className="size-5 rounded" /> })), [games])
   const needsBinding = error && /choose|community|game domain|pick a game/i.test(error)
@@ -150,12 +203,24 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
               onClick={() => setSourceId(s.id)}
               className={cn('relative h-9 rounded-xl px-4 text-[13px] font-medium transition-colors', sourceId === s.id ? 'text-white' : 'text-ink-300 hover:text-ink-100')}
             >
-              {sourceId === s.id && <motion.span layoutId="source-pill" className="accent-gradient absolute inset-0 rounded-xl shadow-[0_6px_20px_-8px_var(--nf-accent)]" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+              {sourceId === s.id && <motion.span layoutId="source-pill" className="accent-gradient absolute inset-0 rounded-xl border border-white/[0.1]" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
               <span className="relative">{s.name}</span>
             </button>
           ))}
         </div>
         <SearchInput value={query} onChange={setQuery} placeholder={source ? `Search ${source.name}${game ? ` for ${game.name}` : ''}` : 'Search'} className="min-w-[280px] flex-1" />
+        <Select<ModSort> value={sort} width={260} className="w-[230px]" icon={<ArrowDownWideNarrow className="size-4" />} options={sortOptions} onChange={chooseSort} />
+        <button
+          onClick={() => setInstalledOnly(!installedOnly)}
+          disabled={!gameId}
+          className={cn(
+            'flex h-9.5 items-center gap-1.5 rounded-xl border px-3 text-[12.5px] font-medium transition-colors disabled:opacity-40',
+            installedOnly ? 'border-emerald-300/25 bg-emerald-400/[0.08] text-emerald-100' : 'border-white/[0.08] text-ink-300 hover:border-white/[0.14] hover:text-ink-100'
+          )}
+          title="Only mods that are already installed in this game"
+        >
+          <CircleCheck className="size-3.5" /> Installed{installedHere ? ` (${installedHere})` : ''}
+        </button>
       </div>
 
       {source?.bindingLabel && game && (
@@ -182,7 +247,13 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
         </div>
       )}
 
-      {source?.description && !error && <p className="mb-5 text-[12.5px] text-ink-400">{source.description}</p>}
+      {source?.description && !error && <p className="mb-3 text-[12.5px] text-ink-400">{source.description}</p>}
+      {approximate && !error && results && results.length > 0 && (
+        <p className="mb-5 flex items-center gap-1.5 text-[12px] text-ink-400">
+          <Info className="size-3.5" /> {source?.name ?? 'This source'} can't list mods by “{SORT_LABEL[sort]}” itself, so NexusForge sorted the mods it returned.
+        </p>
+      )}
+      {!approximate && <div className="mb-2" />}
 
       {error ? (
         <EmptyState icon={<CircleAlert />} title="This source can't search right now" message={error}>
@@ -214,12 +285,16 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
             <div key={i} className="skeleton h-[290px] rounded-2xl" />
           ))}
         </div>
-      ) : results && results.length ? (
+      ) : shownResults && shownResults.length ? (
         <div className={cn('grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4 transition-opacity', loading && 'opacity-60')}>
-          {results.map((r, i) => (
-            <ResultCard key={`${r.sourceId}:${r.id}`} mod={r} index={i} onOpen={() => setOpen(r)} />
+          {shownResults.map((r, i) => (
+            <ResultCard key={`${r.sourceId}:${r.id}`} mod={r} index={i} installed={isInstalled(index, r)} onOpen={() => setOpen(r)} />
           ))}
         </div>
+      ) : results && installedOnly && results.length ? (
+        <EmptyState icon={<CircleCheck />} title="None of these are installed" message={`None of the mods in this list are installed in ${game?.name ?? 'this game'} yet.`}>
+          <Button onClick={() => setInstalledOnly(false)}>Show all</Button>
+        </EmptyState>
       ) : results ? (
         <EmptyState
           icon={<Compass />}
@@ -238,7 +313,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
         </EmptyState>
       ) : null}
 
-      <ModDetailsModal result={open} gameId={gameId} onClose={() => setOpen(undefined)} />
+      <ModDetailsModal result={open} gameId={gameId} installed={open ? isInstalled(index, open) : false} onClose={() => setOpen(undefined)} />
     </div>
   )
 }

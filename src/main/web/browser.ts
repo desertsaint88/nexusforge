@@ -3,21 +3,87 @@
 // site panel; nothing opens a separate window. The user browses as themselves in a persistent session per
 // site; NexusForge only captures the file they download.
 
-import { session, WebContentsView, type Session, type WebContents } from 'electron'
+import { app, session, WebContentsView, type Session, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { safeName, shortId } from '../util/fs'
-import { BROWSER_UA } from '../sources/http'
 import { scoped } from '../logger'
-import { addPanelEntry, isPanelShown, markInteractive, removePanelEntry, setPanelHint, showPanelEntry } from './panel'
+import { addPanelEntry, isPanelShown, markInteractive, removePanelEntry, setPanelBlocked, setPanelHint, showPanelEntry } from './panel'
 import { PAGE_HELPERS, type PageHelper, type PageHelperState } from './helpers'
 
 const log = scoped('browser')
 
+/**
+ * Site pages get Electron's own, honest user agent ("… NexusForge/1.1.0 Chrome/… Electron/…").
+ * Claiming to be Google Chrome is what made Cloudflare's check fail (Turnstile error 600010): the rest of
+ * the browser fingerprint is Electron's, and Cloudflare rejects the mismatch. Honest, it passes by itself.
+ */
+export function siteUserAgent(): string {
+  return app.userAgentFallback
+}
+
+const prepared = new WeakSet<Session>()
+
 function prepareSession(partition: string): Session {
   const s = session.fromPartition(partition)
-  // The default Electron user agent contains "Electron/…", which some sites treat as a bot.
-  s.setUserAgent(BROWSER_UA.replace(' NexusForge/1.0', ''))
+  if (!prepared.has(s)) {
+    prepared.add(s)
+    s.setUserAgent(siteUserAgent())
+  }
   return s
+}
+
+/** Cloudflare's clearance cookies are tied to the user agent that earned them. */
+const CF_COOKIE = /^(cf_clearance|__cf_bm|_cfuvid|cf_chl_.*|__cflb)$/
+
+export async function clearCloudflareCookies(partition: string): Promise<number> {
+  const s = session.fromPartition(partition)
+  const cookies = await s.cookies.get({})
+  let removed = 0
+  for (const c of cookies) {
+    if (!CF_COOKIE.test(c.name)) continue
+    const host = (c.domain ?? '').replace(/^\./, '')
+    await s.cookies.remove(`http${c.secure ? 's' : ''}://${host}${c.path ?? '/'}`, c.name).catch(() => {})
+    removed++
+  }
+  return removed
+}
+
+/**
+ * Watches a page for Cloudflare's bot check failing. The first failure clears the site's Cloudflare cookies
+ * and reloads (a stale clearance from an older NexusForge version can cause it); a second one marks the panel
+ * as blocked, so the user gets a way out (their own browser) instead of an endless check loop.
+ */
+function watchBotCheck(wc: WebContents, partition: string, panelId: string): void {
+  let failures = 0
+  let busy = false
+  wc.on('console-message', (details) => {
+    const message = String(details.message ?? '')
+    if (!/\[Cloudflare Turnstile\] Error|TurnstileError/i.test(message) || busy) return
+    busy = true
+    failures++
+    log.warn(`Cloudflare check failed on ${safeUrl(wc)} (${failures}x): ${message.slice(0, 120)}`)
+    void (async () => {
+      try {
+        if (failures === 1) {
+          await clearCloudflareCookies(partition)
+          if (!wc.isDestroyed()) wc.reload()
+        } else {
+          setPanelBlocked(panelId, true)
+        }
+      } finally {
+        setTimeout(() => (busy = false), 4000)
+      }
+    })()
+  })
+  wc.on('did-navigate', () => setPanelBlocked(panelId, false))
+}
+
+function safeUrl(wc: WebContents): string {
+  try {
+    return wc.isDestroyed() ? '' : new URL(wc.getURL()).host
+  } catch {
+    return ''
+  }
 }
 
 function newView(partition: string): WebContentsView {
@@ -57,10 +123,11 @@ const AUTH_POPUP = /^https:\/\/(accounts\.google\.com|(www\.)?discord\.com\/(oau
  * A page view in a site's persistent session (sign-in pages). Pop-ups open in the same view, except social logins:
  * those need a real pop-up (it reports back to the page that opened it), shown as a small window over NexusForge.
  */
-export function siteView(partition: string): WebContentsView {
+export function siteView(partition: string, panelId: string): WebContentsView {
   prepareSession(partition)
   const view = newView(partition)
   const wc = view.webContents
+  watchBotCheck(wc, partition, panelId)
   wc.setWindowOpenHandler(({ url }) => {
     if (AUTH_POPUP.test(url)) {
       return {
@@ -111,6 +178,7 @@ export function browserHtml(url: string, partition = 'persist:web', timeoutMs = 
     const view = newView(partition)
     const wc = view.webContents
     wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+    watchBotCheck(wc, partition, id)
     let host = ''
     try {
       host = new URL(url).hostname.replace(/^www\./, '')
@@ -246,6 +314,7 @@ export function openCapture(opts: {
   const capture: Capture = { id: opts.id, wc, saveDir: opts.saveDir, handlers: opts.handlers, finished: false, started: false }
   captures.set(wc.id, capture)
   keepInView(wc, (url) => opts.handlers.onNxm?.(url))
+  watchBotCheck(wc, opts.partition, opts.id)
 
   let closedByUs = false
   const cleanup = () => {

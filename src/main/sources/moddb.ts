@@ -1,4 +1,4 @@
-import type { ModDetails, ModSearchResult, ModVersion, SourceGameBinding } from '@shared/types'
+import type { ModDetails, ModSearchResult, ModSort, ModVersion, SourceGameBinding } from '@shared/types'
 import type { AdapterContext, DownloadPlan, ModSourceAdapter } from './types'
 import { decodeEntities, gameNameVariants, nameScore, toPlainText } from './http'
 
@@ -59,11 +59,30 @@ export function createModDbAdapter(ctx: AdapterContext): ModSourceAdapter {
       return [...found.entries()].sort((a, b) => b[1].score - a[1].score).slice(0, 8).map(([value, v]) => ({ value, label: v.label }))
     },
 
-    async search(query, gameId): Promise<ModSearchResult[]> {
+    // ModDB's "rank today" is its popularity of the day (visits), used for trending and recent downloads.
+    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const slug = await ctx.binding(gameId)
       if (!slug) throw new Error(gameId ? 'This game is not on ModDB, or choose it in the game settings.' : 'Pick a game to search ModDB.')
       const q = query.trim()
-      const html = await page(q ? `/games/${slug}/mods?filter=t&kw=${encodeURIComponent(q)}` : `/games/${slug}/mods?sort=visitstotal-desc`)
+      const SORT: Record<ModSort, string> = {
+        relevance: q ? '' : 'visitstotal-desc',
+        endorsed: 'rating-desc',
+        downloads: 'downloadstotal-desc',
+        downloads_recent: 'ranktoday-asc',
+        trending: 'ranktoday-asc',
+        newest: 'id-desc',
+        updated: 'dateup-desc'
+      }
+      const sort = SORT[opts?.sort ?? (q ? 'relevance' : 'downloads')]
+      const params = new URLSearchParams()
+      if (q) {
+        params.set('filter', 't')
+        params.set('kw', q)
+      }
+      if (sort) params.set('sort', sort)
+      const html = await page(`/games/${slug}/mods?${params}`)
       return parseRows(html, /^\/mods\/[^/]+$/).map((r) => ({
         id: r.path.split('/')[2],
         sourceId: 'moddb',

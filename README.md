@@ -9,7 +9,10 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
 - **Every drive**: "Games"-style folders at each local drive's root, Steam libraries Steam doesn't know about, and the launcher folders in Program Files are scanned without any setup. Release folder names are cleaned ("Hell.Let.Loose.Vietnam.v1.4.1-OFME" → "Hell Let Loose Vietnam").
 - **Console games**: disc images in folders without a PC game (e.g. `C:\Games\PS2`) and in PCSX2's game list start in the installed emulator (PCSX2, DuckStation, PPSSPP, Dolphin), with box art from libretro-thumbnails.
 - Manual add by `.exe` or folder, with exe detection that skips uninstallers, crash handlers and redistributables.
-- Library grid with cover art (Steam cache → Steam CDN → Steam store lookup by name → generated art), playtime, mod count, favorites, filters, sort, and a Continue Playing banner. Playtime is tracked for games NexusForge starts directly.
+- Library grid with cover art, playtime, mod count, mod-support badges, favorites, filters (incl. "Mod support" and "Modded"), sort, and a Continue Playing banner. Playtime is tracked for games NexusForge starts directly.
+- **Artwork**: Steam's local cache first, then the Steam store's *current* pictures from `IStoreBrowseService/GetItems` (newer games keep them under hashed paths; the old plain CDN paths 404), each checked to load before it's used. Games outside Steam are matched by folder name, the exe's product name and Unity's `app.info`, with abbreviations ("FNAF", "GTA", "HLL") and demo/edition suffixes handled; an exact match also fixes the title's spelling ("Hell Let Loose: Vietnam"). Pictures shipped in the game folder (`cover.jpg`, `banner.png`) are the fallback. Every game is re-checked once whenever the lookup improves (`ART_REV`).
+- **Startup scan**: every launch looks for new games, then reads every game's folders for installed mods (can be turned off in Settings › Library).
+- **Installed-mod detection** (`mods/detect-core.ts`): BepInEx (Thunderstore `manifest.json`, DLL version info), MelonLoader, UE4SS (`mods.txt`), Unreal `.pak` mods (`~mods`, `LogicMods`, `_P.pak`), Garry's Mod addons (`addon.json`, GMA headers), BeamNG (`db.json` with repository ids), Steam Workshop subscriptions (`appworkshop_<id>.acf` + titles), mod.io, Bethesda plugins (`plugins.txt`), BO3 mods/maps (`workshop.json`), X-Plane add-ons, People Playground contraptions, script hooks/ASI/ReShade and plain `Mods` folders. Files NexusForge deployed are recognized from its manifests. Whether a game can be modded comes from presets, loaders, the engine (Unity, Unreal, Source, BeamNG, Bethesda) and anti-cheat (EasyAntiCheat/BattlEye lower the verdict).
 
 **Mod deployment (VFS)**
 - Mods are staged in NexusForge's storage and deployed as **symlinks → hardlinks → copies**, falling back per file with a plain-language reason (Developer Mode / admin for symlinks, same drive for hardlinks). A per-game capability check shows what's available.
@@ -20,7 +23,9 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
 
 **Mod sources**
 - Adapter interface (`ModSourceAdapter`) with Nexus Mods, Steam Workshop (SteamCMD), Thunderstore, mod.io, CurseForge, ModDB, Modrinth, the BeamNG repository and mod loaders (BepInEx, MelonLoader from GitHub) built in. Requirements are resolved recursively and installed first.
+- **Sorting**: Best match, Top rated, Most downloaded (all time and recent), Trending and Recently added/updated. Each source sorts on its side where it can (Nexus GraphQL with date windows for trending/recent, mod.io `_sort`, CurseForge `sortField`, Workshop `browsesort` + `days`, Thunderstore/Modrinth orderings, BeamNG and ModDB list orders); otherwise NexusForge sorts the results and says so. Mods already installed in the game are marked in the list and the details, with an "Installed" filter.
 - **Accounts**: Nexus Mods, mod.io and CurseForge sign-in happens inside the app (the site's login page in the site panel). Afterwards NexusForge reads the personal API key from the site's key page, checks it against the site's API and stores it encrypted. Pressing Download while signed out asks to sign in first. Steam: SteamCMD signs in once with name + password (+ Steam Guard); the password is never stored.
+- **Cloudflare**: site pages use Electron's own user agent. Posing as Google Chrome made Cloudflare Turnstile fail (error 600010) because the rest of the fingerprint is Electron's; honest, the check passes by itself. If a check still fails, NexusForge clears that site's Cloudflare cookies and retries once, then offers "Open in my browser". Accounts can also be signed in through the user's own browser: the key page opens there and the copied key is picked up from the clipboard (only while that sign-in is running, only strings shaped like the site's key).
 - Downloads never leave the app: pages that need a click (Nexus "Slow download" for free accounts, bot checks) open in the in-app site panel with the button highlighted, and the file installs as soon as it lands.
 - BeamNG.drive mods stay zipped and go to BeamNG's user folder (`startup.ini` `UserPath` respected).
 - Custom JSON feeds (URL or local file) and trusted JavaScript plugins. See [docs/PLUGINS.md](docs/PLUGINS.md).
@@ -41,6 +46,8 @@ npm test             # unit tests (deploy engine, conflicts, scanners, archive l
 npm run build
 npm run smoke        # end-to-end run of the built app with screenshots in .smoke/shots
 node scripts/smoke-sources.mjs   # live checks against the real mod sites (.smoke/sources/shots)
+node scripts/smoke-1.2.mjs       # artwork, installed-mod detection, sorting, look (this PC's library, read-only)
+node scripts/smoke-cloudflare.mjs  # Nexus login/registration pass Cloudflare inside the app (no automation driver)
 npm run dist         # NSIS installer + portable exe in release/
 ```
 

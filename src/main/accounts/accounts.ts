@@ -3,7 +3,7 @@
 // user is signed in, NexusForge reads their personal API key from the site's key page and checks it against the
 // site's API, so nobody has to copy keys around. Steam is different: SteamCMD signs in with name + password once.
 
-import { clipboard, shell } from 'electron'
+import { clipboard, session, shell } from 'electron'
 import type { AccountId, AccountInfo, SteamLoginRequest, SteamLoginResponse } from '@shared/types'
 import { db, getApiKey, getSettings, setSettings } from '../store'
 import { emit, toast } from '../events'
@@ -12,8 +12,8 @@ import { HttpError, httpJson } from '../sources/http'
 import { NEXUS_PARTITION } from '../sources/nexus'
 import { clearSiteSession, siteView } from '../web/browser'
 import { addPanelEntry, removePanelEntry, setPanelHint } from '../web/panel'
-import { MARK } from '../web/helpers'
 import { steamLogin, steamLogout } from '../steam/steamcmd'
+import { keyProbe, type KeyPageDef, type KeyPageState } from './key-probe'
 
 const log = scoped('accounts')
 
@@ -23,7 +23,7 @@ export interface AccountProfile {
   detail?: string
 }
 
-interface WebAccount {
+interface WebAccount extends KeyPageDef {
   id: Exclude<AccountId, 'steam'>
   name: string
   unlocks: string
@@ -38,14 +38,13 @@ interface WebAccount {
   isAuthPage(url: URL): boolean
   /** Signed in and somewhere on the site, but not on the key page: go there. */
   isSitePage(url: URL): boolean
-  /** Key patterns, as regex sources. */
-  keyPattern: string
-  /** Heading near the user's own key ("Personal API Key"), preferred over other keys on the page. */
-  section: string
-  /** Button that creates a key when there is none. */
-  createButton: string
-  /** Page text that means "not signed in". */
-  loggedOutText: string
+  /** Press the create button for the user (once per sign-in) instead of only pointing at it. */
+  autoCreate?: boolean
+  /**
+   * Login cookie of the site: when the session has it, sign-in opens the key page directly instead of the login
+   * form (the user is already logged in there and only the key is missing).
+   */
+  sessionCookie?: string
   validate(key: string): Promise<AccountProfile>
   hints: { signIn: string; register: string; keyPage: string; noKey: string }
 }
@@ -65,7 +64,10 @@ const WEB_ACCOUNTS: WebAccount[] = [
     isSitePage: (u) => /^(www\.|next\.)?nexusmods\.com$/i.test(u.hostname),
     keyPattern: '[A-Za-z0-9+/]{16,}={0,2}--[A-Za-z0-9+/]{8,}={0,2}--[A-Za-z0-9+/]{8,}={0,2}',
     section: 'personal api key',
+    sectionHeading: '^personal api key$',
     createButton: '^(request|generate|create)( an?| new)?( personal)?( api)? key$',
+    autoCreate: true,
+    sessionCookie: 'nexusmods_session',
     loggedOutText: 'please log in again|your session has expired|log in to continue',
     async validate(key) {
       const v = await httpJson<{ name: string; is_premium?: boolean; is_supporter?: boolean; profile_url?: string }>('https://api.nexusmods.com/v1/users/validate.json', {
@@ -77,7 +79,7 @@ const WEB_ACCOUNTS: WebAccount[] = [
       signIn: 'Log in to Nexus Mods (or create a free account). NexusForge picks up your API key by itself afterwards.',
       register: 'Create your free Nexus Mods account. After confirming your e-mail, log in here; NexusForge does the rest.',
       keyPage: 'Reading your personal API key…',
-      noKey: 'Click the highlighted button to create your personal API key; NexusForge reads it as soon as it appears.'
+      noKey: 'Click the highlighted “Request Api Key” under “Personal API Key” (at the bottom); NexusForge reads the key as soon as it appears.'
     }
   },
   {
@@ -224,45 +226,13 @@ export async function saveAccountKey(id: AccountId, key: string): Promise<Accoun
 // ---------------------------------------------------------------------------
 // Web sign-in
 
-/** Runs in the key page (isolated world): finds key-looking strings, preferring the user's own section. */
-function keyProbe(def: WebAccount, markLabel: string): string {
-  return `(() => {
-${MARK}
-const KEY = new RegExp(${JSON.stringify(def.keyPattern)}, 'g');
-const SECTION = new RegExp(${JSON.stringify(def.section)}, 'i');
-const CREATE = new RegExp(${JSON.stringify(def.createButton)}, 'i');
-const LOGGED_OUT = new RegExp(${JSON.stringify(def.loggedOutText)}, 'i');
-const body = document.body ? (document.body.innerText || '') : '';
-const loggedOut = LOGGED_OUT.test(body);
-const preferred = [], other = [];
-const push = (s, el) => {
-  if (!s) return;
-  for (const m of String(s).matchAll(KEY)) {
-    let near = false;
-    for (let p = el, i = 0; p && i < 8; p = p.parentElement || (p.getRootNode && p.getRootNode().host), i++) {
-      if (SECTION.test((p.innerText || p.textContent || '').slice(0, 4000))) { near = true; break; }
-    }
-    (near ? preferred : other).push(m[0]);
-  }
-};
-for (const el of all('input, textarea')) push(el.value, el);
-for (const el of all('code, pre, kbd, samp, span, p, div, td, li, dd')) if (!el.children.length) push(el.textContent, el);
-for (const el of all('[value], [data-key], [data-value], [data-clipboard-text]')) push(el.getAttribute('value') || el.getAttribute('data-key') || el.getAttribute('data-value') || el.getAttribute('data-clipboard-text'), el);
-const keys = [...new Set([...preferred, ...other])].slice(0, 8);
-let canCreate = false;
-if (!keys.length && !loggedOut) {
-  const btn = find(CREATE);
-  if (btn) { canCreate = true; mark(btn, ${JSON.stringify(markLabel)}); }
-}
-return { keys, loggedOut, canCreate };
-})()`
-}
-
 /**
  * Watches the clipboard for something that looks like the site's API key (copied from the user's own browser)
  * and hands each new candidate to `onKey`. Only strings matching the key pattern are looked at.
  */
 function watchClipboard(def: WebAccount, onKey: (key: string) => Promise<boolean>): () => void {
+  // Tests switch it off: a key the user copied would otherwise finish every test sign-in at once.
+  if (process.env.NEXUSFORGE_NO_CLIPBOARD === '1') return () => {}
   const pattern = new RegExp(`^\\s*(${def.keyPattern})\\s*$`)
   const seen = new Set<string>()
   let checking = false
@@ -367,6 +337,7 @@ function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> 
     const tried = new Set<string>()
     let keyPageVisits = 0
     let lastSiteRedirect = 0
+    let autoCreated = false
     let probing = false
     busy.add(def.id)
     publish()
@@ -376,6 +347,7 @@ function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> 
       if (done) return false
       try {
         const profile = await acceptKey(def, key)
+        log.info(`${def.name}: signed in with a copied key${profile.user ? ` as ${profile.user}` : ''}`)
         toast('success', `Signed in to ${def.name}`, profile.user ? `as ${profile.user}. ${profile.detail ?? ''}` : profile.detail)
         finish(undefined, info(def))
         return true
@@ -405,10 +377,16 @@ function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> 
           return
         }
         if (def.isKeyPage(url)) {
-          const state = (await wc.executeJavaScriptInIsolatedWorld(1002, [{ code: keyProbe(def, def.hints.noKey) }]).catch(() => undefined)) as
-            | { keys: string[]; loggedOut: boolean; canCreate: boolean }
-            | undefined
+          const click = Boolean(def.autoCreate) && !autoCreated
+          const state = (await wc.executeJavaScriptInIsolatedWorld(1002, [{ code: keyProbe(def, def.hints.noKey, click) }]).catch(() => undefined)) as KeyPageState | undefined
           if (!state) return
+          if (state.clicked) {
+            // Signing in is the user's go-ahead for a key; the page shows it right after (read on the next probe).
+            autoCreated = true
+            log.info(`${def.name}: requested the personal API key`)
+            setPanelHint(panelId, def.hints.keyPage)
+            return
+          }
           if (state.loggedOut) {
             // The key page doesn't redirect visitors itself; send them to the login once per visit.
             if (keyPageVisits++ < 3) {
@@ -422,7 +400,7 @@ function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> 
             tried.add(key)
             try {
               const profile = await acceptKey(def, key)
-              log.info(`${def.name}: signed in${profile.user ? ` as ${profile.user}` : ''}`)
+              log.info(`${def.name}: signed in with the key from the key page${profile.user ? ` as ${profile.user}` : ''}`)
               toast('success', `Signed in to ${def.name}`, profile.user ? `as ${profile.user}. ${profile.detail ?? ''}` : profile.detail)
               finish(undefined, info(def))
               return
@@ -455,7 +433,10 @@ function runWebSignIn(def: WebAccount, register: boolean): Promise<AccountInfo> 
       show: true,
       onCancel: () => finish(new Error('Sign-in cancelled'))
     })
-    void wc.loadURL(register ? def.registerUrl : def.signInUrl)
+    void (async () => {
+      const loggedIn = !register && def.sessionCookie ? (await session.fromPartition(def.partition).cookies.get({ name: def.sessionCookie }).catch(() => [])).length > 0 : false
+      if (!done) void wc.loadURL(register ? def.registerUrl : loggedIn ? def.keyPageUrl : def.signInUrl)
+    })()
   })
 }
 

@@ -1,4 +1,4 @@
-import type { ModDependency, ModDetails, ModSearchResult, ModVersion, SourceGameBinding } from '@shared/types'
+import type { ModDependency, ModDetails, ModSearchResult, ModSort, ModVersion, SourceGameBinding } from '@shared/types'
 import type { AdapterContext, DownloadPlan, ModSourceAdapter } from './types'
 import { HttpError, gameNameVariants, nameScore, normName, toPlainText } from './http'
 
@@ -58,6 +58,26 @@ export function parseNxm(url: string): { domain: string; modId: string; fileId: 
   if (!m) return undefined
   const q = new URL(url.replace(/^nxm:/i, 'https:')).searchParams
   return { domain: m[1].toLowerCase(), modId: m[2], fileId: m[3], key: q.get('key') ?? undefined, expires: q.get('expires') ?? undefined }
+}
+
+/**
+ * The filter and order nexusmods.com itself sends for a game's mod list (recorded from the site, 2026-10-25):
+ * adult content hidden, and its "Trending mods" / "Popular mods" lists are endorsements / downloads among mods
+ * published in the last 7 / 28 days, the window starting on the hour.
+ */
+export function nexusListing(domain: string, query: string, sort: ModSort, now = Date.now()): { f: Record<string, unknown>; s: Record<string, { direction: 'DESC' }>[] } {
+  const f: Record<string, unknown> = { gameDomainName: [{ value: domain, op: 'EQUALS' }], adultContent: [{ value: false, op: 'EQUALS' }] }
+  if (query) f.name = [{ value: query, op: 'WILDCARD' }]
+  const hour = Math.floor(now / 3_600_000) * 3600
+  if (sort === 'trending') f.createdAt = [{ value: String(hour - 7 * 86400), op: 'GTE' }]
+  if (sort === 'downloads_recent') f.createdAt = [{ value: String(hour - 28 * 86400), op: 'GTE' }]
+  const field =
+    sort === 'downloads' || sort === 'downloads_recent' ? 'downloads'
+    : sort === 'newest' ? 'createdAt'
+    : sort === 'updated' ? 'updatedAt'
+    : sort === 'relevance' && query ? 'relevance'
+    : 'endorsements'
+  return { f, s: [{ [field]: { direction: 'DESC' } }] }
 }
 
 export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
@@ -128,43 +148,27 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
     },
 
     sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+    sortLabels: {
+      endorsed: 'Endorsements',
+      downloads: 'Downloads',
+      downloads_recent: 'Popular mods, 28 days',
+      trending: 'Trending mods, 7 days',
+      newest: 'Date published',
+      updated: 'Last updated'
+    },
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const d = await domain(gameId)
       const q = query.trim()
       const sort = opts?.sort ?? (q ? 'relevance' : 'endorsed')
-      const base: Record<string, unknown> = { gameDomainName: [{ value: d, op: 'EQUALS' }] }
-      if (q) base.name = [{ value: q, op: 'WILDCARD' }]
-      // Nexus' API takes dates as Unix seconds. Trending = best endorsed among new mods ("hot files"),
-      // recent downloads = most downloaded among mods updated in the last 30 days.
-      const since = (days: number) => [{ value: String(Math.floor(Date.now() / 1000) - days * 86400), op: 'GTE' }]
-      const order: Record<string, { direction: 'DESC' }> =
-        sort === 'downloads' || sort === 'downloads_recent' ? { downloads: { direction: 'DESC' } }
-        : sort === 'newest' ? { createdAt: { direction: 'DESC' } }
-        : sort === 'updated' ? { updatedAt: { direction: 'DESC' } }
-        : sort === 'relevance' && q ? { relevance: { direction: 'DESC' } }
-        : { endorsements: { direction: 'DESC' } }
-      const run = async (extra: Record<string, unknown>) =>
-        (
-          await gql<{ mods: { nodes: GqlMod[] } }>(
-            `query($f: ModsFilter, $s: [ModsSort!]){ mods(filter: $f, sort: $s, count: 48) { nodes {
-              modId name summary author version downloads endorsements thumbnailUrl pictureUrl createdAt updatedAt uploader { name } game { id domainName }
-            } } }`,
-            { f: { ...base, ...extra }, s: [order] }
-          )
-        ).mods.nodes
-      let nodes: GqlMod[]
-      if (sort === 'trending') {
-        // Quiet games have few new mods; widen the window until the list is worth showing.
-        nodes = []
-        for (const days of [14, 45, 120]) {
-          nodes = await run({ createdAt: since(days) })
-          if (nodes.length >= 12) break
-        }
-      } else if (sort === 'downloads_recent') {
-        nodes = await run({ updatedAt: since(30) })
-        if (nodes.length < 12) nodes = await run({ updatedAt: since(120) })
-      } else nodes = await run({})
+      const nodes = (
+        await gql<{ mods: { nodes: GqlMod[] } }>(
+          `query($f: ModsFilter, $s: [ModsSort!]){ mods(filter: $f, sort: $s, count: 48, viewUserBlockedContent: false) { nodes {
+            modId name summary author version downloads endorsements thumbnailUrl pictureUrl createdAt updatedAt uploader { name } game { id domainName }
+          } } }`,
+          nexusListing(d, q, sort)
+        )
+      ).mods.nodes
       return nodes.map((m) => ({
         id: encodeId(m.game.domainName, m.game.id, m.modId),
         sourceId: 'nexus',

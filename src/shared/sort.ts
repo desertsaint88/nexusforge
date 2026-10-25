@@ -4,7 +4,7 @@ export const SORT_LABEL: Record<ModSort, string> = {
   relevance: 'Best match',
   endorsed: 'Top rated',
   downloads: 'Most downloaded',
-  downloads_recent: 'Most downloaded (recent)',
+  downloads_recent: 'Popular right now',
   trending: 'Trending',
   newest: 'Recently added',
   updated: 'Recently updated'

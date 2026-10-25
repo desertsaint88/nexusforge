@@ -19,7 +19,7 @@ execFileSync(join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-a', '-c', '
 
 const app = await electron.launch({
   executablePath: join(root, 'release', 'win-unpacked', 'NexusForge.exe'),
-  env: { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata') }
+  env: { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata'), NEXUSFORGE_NO_CLIPBOARD: '1' }
 })
 const page = await app.firstWindow()
 await page.waitForSelector('text=NexusForge')

@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { gameNameVariants, nameScore, toPlainText } from '../src/main/sources/http'
 import { parseDependency } from '../src/main/sources/thunderstore'
 import { parseRows } from '../src/main/sources/moddb'
-import { parseNxm } from '../src/main/sources/nexus'
+import { workshopBrowseIds } from '../src/main/sources/steamworkshop'
+import { nexusListing, parseNxm } from '../src/main/sources/nexus'
 import { placeInOrder } from '../src/main/mods/order'
 import { missingRequirements, supportsVersion } from '../src/shared/deps'
 import { extractGma, addonSlug } from '../src/main/steam/gma'
@@ -58,6 +59,37 @@ describe('source parsers', () => {
     const rows = parseRows(html, /^\/mods\/[^/]+$/)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ path: '/mods/minerva-reimagined', title: 'MINERVA: REIMAGINED', image: 'https://media.moddb.com/x.png', summary: 'New life & style for an old mod.' })
+  })
+})
+
+describe('Nexus mod lists', () => {
+  // What nexusmods.com sent for garrysmod on 2026-10-25 12:10 (Unix 1792926493): adult content hidden,
+  // "Trending mods" = endorsements of mods published since the hour 7 days ago, "Popular mods" = downloads, 28 days.
+  const now = 1792926493_000
+  it('asks for the same list as the website', () => {
+    expect(nexusListing('garrysmod', '', 'endorsed', now)).toEqual({
+      f: { gameDomainName: [{ value: 'garrysmod', op: 'EQUALS' }], adultContent: [{ value: false, op: 'EQUALS' }] },
+      s: [{ endorsements: { direction: 'DESC' } }]
+    })
+    expect(nexusListing('garrysmod', '', 'trending', now).f.createdAt).toEqual([{ value: String(1792926000 - 7 * 86400), op: 'GTE' }])
+    expect(nexusListing('garrysmod', '', 'downloads_recent', now)).toMatchObject({ f: { createdAt: [{ value: String(1792926000 - 28 * 86400), op: 'GTE' }] }, s: [{ downloads: { direction: 'DESC' } }] })
+    expect(nexusListing('garrysmod', '', 'newest', now).s).toEqual([{ createdAt: { direction: 'DESC' } }])
+    expect(nexusListing('garrysmod', '', 'updated', now).s).toEqual([{ updatedAt: { direction: 'DESC' } }])
+    expect(nexusListing('garrysmod', 'car', 'relevance', now)).toMatchObject({ f: { name: [{ value: 'car', op: 'WILDCARD' }] }, s: [{ relevance: { direction: 'DESC' } }] })
+  })
+})
+
+describe('Steam Workshop browse page', () => {
+  it('lists the result items only, in page order', () => {
+    // Shape of the page's embedded data (2026-10-25): the upload guide link and a description linking another item
+    // come before or between the results and must not count.
+    const html =
+      '{\\"instructionsURL\\":\\"https://steamcommunity.com/sharedfiles/filedetails/?id=1838376273\\"}' +
+      '{\\"total_count\\":796383,\\"results\\":[{\\"publishedfileid\\":\\"2312356877\\",\\"creator\\":\\"1\\",\\"title\\":\\"A\\"},' +
+      '{\\"publishedfileid\\":\\"2385213638\\",\\"creator\\":\\"2\\",\\"short_description\\":\\"New Version : https://steamcommunity.com/sharedfiles/filedetails/?id=2390800738\\",' +
+      '\\"children\\":[{\\"publishedfileid\\":\\"111111111\\",\\"sortorder\\":0}]},' +
+      '{\\"publishedfileid\\":\\"2987467480\\",\\"creator\\":\\"3\\"}]}'
+    expect(workshopBrowseIds(html)).toEqual(['2312356877', '2385213638', '2987467480'])
   })
 })
 

@@ -68,7 +68,7 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`)
 }
 
-const env = { ...process.env, NEXUSFORGE_USER_DATA: userData }
+const env = { ...process.env, NEXUSFORGE_USER_DATA: userData, NEXUSFORGE_NO_CLIPBOARD: '1' }
 delete env.ELECTRON_RENDERER_URL // always test the production bundle
 const app = await electron.launch({ executablePath: electronPath, args: [root], env, timeout: 60_000 })
 const errors = []

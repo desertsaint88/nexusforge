@@ -59,8 +59,9 @@ export function createModDbAdapter(ctx: AdapterContext): ModSourceAdapter {
       return [...found.entries()].sort((a, b) => b[1].score - a[1].score).slice(0, 8).map(([value, v]) => ({ value, label: v.label }))
     },
 
-    // ModDB's "rank today" is its popularity of the day (visits), used for trending and recent downloads.
-    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+    // ModDB's "Popular Today" (rank today, by visits) is its trending list.
+    sorts: ['relevance', 'endorsed', 'downloads', 'trending', 'newest', 'updated'],
+    sortLabels: { endorsed: 'Rating', downloads: 'Downloads', trending: 'Popular Today', newest: 'Added', updated: 'Updated' },
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const slug = await ctx.binding(gameId)

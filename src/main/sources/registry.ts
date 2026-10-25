@@ -138,7 +138,9 @@ export function listSources(): SourceInfo[] {
       homepage: adapter.homepage,
       bindingLabel: adapter.bindingLabel,
       apiKeyUrl: adapter.apiKeyUrl,
-      sorts: adapter.sorts
+      sorts: adapter.sorts,
+      sortLabels: adapter.sortLabels,
+      querySorts: adapter.querySorts
     })
   }
   return out
@@ -169,21 +171,17 @@ export async function searchSource(id: string, query: string, gameId?: string): 
 }
 
 /**
- * Search in a given order. Sources that can't produce the order themselves get their (default) results
- * sorted here, and the response says so.
+ * Search in a given order. Orders the source has are passed through untouched, so the list is the site's own
+ * (an empty "trending" list on a quiet game stays empty, like on the site). Only sources without that order
+ * (plugins, feeds) get their results sorted here, and the response says so.
  */
 export async function querySource(id: string, query: string, gameId?: string, opts: ModSearchOptions = {}): Promise<ModSearchResponse> {
   const adapter = adapterFor(id)
   const sort: ModSort = opts.sort ?? (query.trim() ? 'relevance' : 'endorsed')
-  const native = sort === 'relevance' || (adapter.sorts?.includes(sort) ?? false)
+  const offered = (query.trim() && adapter.querySorts) || adapter.sorts
+  const native = sort === 'relevance' || (offered?.includes(sort) ?? false)
   const raw = await guarded(id, 'search', (a) => a.search(query, gameId, native ? { sort } : {}))
   const results = raw.map((r) => ({ ...r, sourceId: id }))
-  if (native && !results.length && sort !== 'relevance') {
-    // Some sites return nothing for an order on quiet games (ModDB's rating list needs rated mods): fall back
-    // to their default list, sorted here.
-    const fallback = (await guarded(id, 'search', (a) => a.search(query, gameId, {}))).map((r) => ({ ...r, sourceId: id }))
-    if (fallback.length) return { results: sortResults(fallback, sort), sort, approximate: true }
-  }
   return native ? { results, sort } : { results: sortResults(results, sort), sort, approximate: true }
 }
 

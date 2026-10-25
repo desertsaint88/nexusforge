@@ -17,7 +17,7 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`)
 }
 
-const env = { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata') }
+const env = { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata'), NEXUSFORGE_NO_CLIPBOARD: '1' }
 delete env.ELECTRON_RENDERER_URL
 const app = await electron.launch({ executablePath: electronPath, args: [root], env, timeout: 60_000 })
 const page = await app.firstWindow()

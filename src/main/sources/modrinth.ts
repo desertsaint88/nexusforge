@@ -52,6 +52,8 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
     homepage: 'https://modrinth.com',
 
     sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
+    // Modrinth has no ratings; its closest order is follows.
+    sortLabels: { endorsed: 'Follow count', downloads: 'Download count', newest: 'Recently published', updated: 'Recently updated' },
 
     async search(query, _gameId, opts): Promise<ModSearchResult[]> {
       const INDEX: Partial<Record<ModSort, string>> = { relevance: 'relevance', endorsed: 'follows', downloads: 'downloads', newest: 'newest', updated: 'updated' }

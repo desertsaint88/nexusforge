@@ -93,8 +93,6 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const [approximate, setApproximate] = useState(false)
   const [installedOnly, setInstalledOnly] = useState(false)
   const seq = useRef(0)
-  // "Best match" only means something while searching.
-  const sort: ModSort = sortPref === 'relevance' && !query.trim() ? 'endorsed' : sortPref
   const chooseSort = (s: ModSort) => {
     setSortPref(s)
     localStorage.setItem(SORT_KEY, s)
@@ -114,6 +112,11 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
 
   const game = games.find((g) => g.id === gameId)
   const source = sources.find((s) => s.id === sourceId)
+  // Each site only gets the orders it has itself, so the list matches the site's. "Best match" only while searching.
+  const searching = Boolean(query.trim())
+  const offered = (searching && source?.querySorts) || source?.sorts
+  const available = SORTS.filter((s) => (s === 'relevance' ? searching : !offered || offered.includes(s)))
+  const sort: ModSort = available.includes(sortPref) ? sortPref : searching ? 'relevance' : available.includes('endorsed') ? 'endorsed' : (available[0] ?? 'endorsed')
   const updateGame = useLibrary((s) => s.update)
 
   // Which game the source searches ("Casualties: Unknown" on Nexus is "scavprototype"); shown so it can be corrected.
@@ -176,11 +179,8 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const index = useMemo(() => installedIndex(managed, detected?.mods ?? []), [managed, detected])
   const shownResults = useMemo(() => (results && installedOnly ? results.filter((r) => isInstalled(index, r)) : results), [results, installedOnly, index])
   const installedHere = useMemo(() => (results ?? []).filter((r) => isInstalled(index, r)).length, [results, index])
-  const sortOptions = SORTS.filter((s) => s !== 'relevance' || query.trim()).map((s) => ({
-    value: s,
-    label: SORT_LABEL[s],
-    hint: source?.sorts && s !== 'relevance' && !source.sorts.includes(s) ? 'approx.' : undefined
-  }))
+  const sortOptions = available.map((s) => ({ value: s, label: SORT_LABEL[s], hint: source?.sortLabels?.[s] }))
+  const siteSortName = source?.sortLabels?.[sort]
 
   const gameOptions = useMemo(() => games.map((g) => ({ value: g.id, label: g.name, icon: <GameIcon game={g} className="size-5 rounded" /> })), [games])
   const needsBinding = error && /choose|community|game domain|pick a game/i.test(error)
@@ -209,7 +209,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
           ))}
         </div>
         <SearchInput value={query} onChange={setQuery} placeholder={source ? `Search ${source.name}${game ? ` for ${game.name}` : ''}` : 'Search'} className="min-w-[280px] flex-1" />
-        <Select<ModSort> value={sort} width={260} className="w-[230px]" icon={<ArrowDownWideNarrow className="size-4" />} options={sortOptions} onChange={chooseSort} />
+        <Select<ModSort> value={sort} width={340} className="w-[230px]" icon={<ArrowDownWideNarrow className="size-4" />} options={sortOptions} onChange={chooseSort} />
         <button
           onClick={() => setInstalledOnly(!installedOnly)}
           disabled={!gameId}
@@ -248,12 +248,16 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
       )}
 
       {source?.description && !error && <p className="mb-3 text-[12.5px] text-ink-400">{source.description}</p>}
-      {approximate && !error && results && results.length > 0 && (
+      {!error && results && results.length > 0 && (approximate || siteSortName) ? (
         <p className="mb-5 flex items-center gap-1.5 text-[12px] text-ink-400">
-          <Info className="size-3.5" /> {source?.name ?? 'This source'} can't list mods by “{SORT_LABEL[sort]}” itself, so NexusForge sorted the mods it returned.
+          <Info className="size-3.5" />
+          {approximate
+            ? `${source?.name ?? 'This source'} can't list mods by “${SORT_LABEL[sort]}” itself, so NexusForge sorted the mods it returned.`
+            : `Same order as ${source?.name ?? 'the site'} itself: “${siteSortName}”.`}
         </p>
+      ) : (
+        <div className="mb-2" />
       )}
-      {!approximate && <div className="mb-2" />}
 
       {error ? (
         <EmptyState icon={<CircleAlert />} title="This source can't search right now" message={error}>
@@ -302,7 +306,9 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
           message={
             query
               ? `No mods on ${source?.name ?? 'this source'} match "${query}".`
-              : `${source?.name ?? 'This source'} has no mods for ${game?.name ?? 'this game'}${source?.bindingLabel ? `, or it lists the game under a different name. You can pick the right ${source.bindingLabel.toLowerCase()} in the game's settings` : ''}.`
+              : sort === 'trending' || sort === 'downloads_recent'
+                ? `${source?.name ?? 'This source'} lists nothing under “${siteSortName ?? SORT_LABEL[sort]}” for ${game?.name ?? 'this game'} right now (no new mods in that time). Try “${SORT_LABEL.endorsed}”.`
+                : `${source?.name ?? 'This source'} has no mods for ${game?.name ?? 'this game'}${source?.bindingLabel ? `, or it lists the game under a different name. You can pick the right ${source.bindingLabel.toLowerCase()} in the game's settings` : ''}.`
           }
         >
           {source?.bindingLabel && game && (

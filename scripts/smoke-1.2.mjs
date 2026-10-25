@@ -20,7 +20,7 @@ const check = (name, ok, detail = '') => {
 }
 const info = (line) => console.log(`      ${line}`)
 
-const env = { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata') }
+const env = { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata'), NEXUSFORGE_NO_CLIPBOARD: '1' }
 delete env.ELECTRON_RENDERER_URL
 const app = await electron.launch({ executablePath: electronPath, args: [root], env, timeout: 60_000 })
 const page = await app.firstWindow()
@@ -116,26 +116,30 @@ await safe('sorting', async () => {
   const games = await invoke('library:list')
   const beam = find(games, 'BeamNG.drive')
   const gmod = find(games, "Garry's Mod")
-  const sorts = ['endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated']
   const time = (s) => (s ? Date.parse(s) : 0)
   const desc = (list, f) => list.every((x, i) => i === 0 || f(list[i - 1]) >= f(x))
-  for (const [source, game] of [['nexus', beam], ['beamng', beam], ['steamworkshop', gmod], ['moddb', beam]]) {
+  // Each source offers only its site's own orders (scripts/verify-sorts-probe.cjs compares them with the sites).
+  const offered = Object.fromEntries((await invoke('sources:list')).map((s) => [s.id, s.sorts ?? []]))
+  for (const [source, game] of [['nexus', beam], ['beamng', beam], ['steamworkshop', gmod], ['moddb', gmod]]) {
     if (!game) continue
-    const line = []
-    for (const sort of sorts) {
+    for (const sort of offered[source].filter((s) => s !== 'relevance')) {
       const r = await invoke('sources:query', source, '', game.id, { sort }).catch((e) => ({ error: e.message, results: [] }))
       const list = r.results
       let ordered = true
       if (!r.error && list.length > 2) {
-        if (sort === 'downloads' && source !== 'steamworkshop' && source !== 'moddb') ordered = desc(list, (x) => x.downloads ?? 0)
-        if (sort === 'endorsed' && source === 'nexus') ordered = desc(list, (x) => x.endorsements ?? 0)
+        if ((sort === 'downloads' || sort === 'downloads_recent') && source !== 'steamworkshop' && source !== 'moddb') ordered = desc(list, (x) => x.downloads ?? 0)
+        if ((sort === 'endorsed' || sort === 'trending') && source === 'nexus') ordered = desc(list, (x) => x.endorsements ?? 0)
         if (sort === 'newest' && source === 'nexus') ordered = desc(list, (x) => time(x.createdAt))
         if (sort === 'updated' && source === 'nexus') ordered = desc(list, (x) => time(x.updatedAt))
       }
-      check(`${source}: ${sort}`, !r.error && list.length > 0 && ordered, r.error ? r.error.slice(0, 100) : `${list.length} mods${r.approximate ? ' (sorted by NexusForge)' : ''}, top: ${list.slice(0, 2).map((x) => x.name).join(' | ')}`)
-      line.push(sort)
+      // Time-window lists ("Trending mods, 7 days") can be empty on quiet games, like on the site.
+      const mayBeEmpty = sort === 'trending' || sort === 'downloads_recent'
+      check(`${source}: ${sort}`, !r.error && !r.approximate && (list.length > 0 || mayBeEmpty) && ordered, r.error ? r.error.slice(0, 100) : `${list.length} mods, top: ${list.slice(0, 2).map((x) => x.name).join(' | ')}`)
     }
   }
+  const nexusSorts = offered.nexus.join(',')
+  check('Nexus offers the website\'s orders', nexusSorts === 'relevance,endorsed,downloads,downloads_recent,trending,newest,updated', nexusSorts)
+  check('Thunderstore offers no made-up trending', !offered.thunderstore.includes('trending'), offered.thunderstore.join(','))
   // Searching keeps working with an order.
   if (beam) {
     const q = await invoke('sources:query', 'nexus', 'car', beam.id, { sort: 'relevance' })

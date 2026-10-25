@@ -86,14 +86,15 @@ export function createModioAdapter(ctx: AdapterContext): ModSourceAdapter {
       return [...seen.entries()].sort((a, b) => b[1].score - a[1].score).map(([id, v]) => ({ value: String(id), label: v.label }))
     },
 
-    sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+    sorts: ['relevance', 'endorsed', 'downloads', 'trending', 'newest', 'updated'],
+    sortLabels: { endorsed: 'Highest rated', downloads: 'Most downloaded', trending: 'Popular', newest: 'Recently added', updated: 'Last updated' },
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       // Without a key the game lookup fails too; say what's actually missing.
       key()
       const g = await ctx.binding(gameId)
       if (!g) throw new Error(gameId ? 'This game is not on mod.io, or choose it in the game settings.' : 'Pick a game to search mod.io.')
-      // mod.io's "popular" ranks by today's downloads, which is both its trending list and "recent downloads".
+      // mod.io's "popular" ranks by recent downloads: its trending list.
       const SORT: Record<ModSort, string> = {
         relevance: '-popular',
         endorsed: '-rating',

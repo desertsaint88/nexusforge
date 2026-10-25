@@ -312,9 +312,10 @@ export interface ModSearchResult {
 }
 
 /**
- * Orders for mod lists. Sources sort on their side where they can; the rest is sorted from the results.
- * downloads_recent: most downloaded among mods updated in the last 30 days.
- * trending: what the source calls trending/hot, else the best-rated mods of the last two weeks.
+ * Orders for mod lists. Each source only offers the orders its own website has, so a list matches the site's.
+ * downloads_recent: what the site calls popular right now (Nexus "Popular mods": most downloaded of the last
+ * 28 days; Steam "Most Popular" of the last month).
+ * trending: what the site calls trending/hot (Nexus "Trending mods": most endorsed of the last 7 days).
  */
 export type ModSort = 'relevance' | 'endorsed' | 'downloads' | 'downloads_recent' | 'trending' | 'newest' | 'updated'
 
@@ -402,6 +403,10 @@ export interface SourceInfo {
   bindingLabel?: string
   /** Orders the source can produce itself (others are approximated from the results). */
   sorts?: ModSort[]
+  /** The site's own name for each of those orders. */
+  sortLabels?: Partial<Record<ModSort, string>>
+  /** Orders available when searching for a name, if fewer than `sorts`. */
+  querySorts?: ModSort[]
   error?: string
 }
 

@@ -16,6 +16,10 @@ export interface ModSourceAdapter {
   // Optional extras ----------------------------------------------------------
   /** Orders the source produces on its side (top rated, most downloaded, trending, …). */
   sorts?: ModSort[]
+  /** What the site itself calls each of those orders ("Endorsements", "Most Subscribed"), shown in the sort menu. */
+  sortLabels?: Partial<Record<ModSort, string>>
+  /** Orders the site's search can produce, when that's fewer than `sorts` (default: all of `sorts`). */
+  querySorts?: ModSort[]
   description?: string
   homepage?: string
   /** Shown as the label of the per-game binding field ("Thunderstore community"). */

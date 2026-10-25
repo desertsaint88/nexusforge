@@ -36,6 +36,19 @@ async function fileDetails(ctx: AdapterContext, ids: string[]): Promise<FileDeta
   return res.response.publishedfiledetails ?? []
 }
 
+/**
+ * The items of a Workshop browse page, in the page's order. The page carries its list as data (result objects
+ * start with publishedfileid + creator); plain links can't be used, because item descriptions link to other items
+ * ("New version: …") and the page links the game's upload guide, and those would end up in the list.
+ */
+export function workshopBrowseIds(html: string): string[] {
+  const listed = [...html.matchAll(/\{\\?"publishedfileid\\?"\s*:\s*\\?"(\d{6,})\\?"\s*,\s*\\?"creator\\?"/g)].map((m) => m[1])
+  if (listed.length) return [...new Set(listed)].slice(0, 30)
+  // Older server-rendered pages: one "workshopItem" block per result.
+  const blocks = [...html.matchAll(/class="workshopItem"[\s\S]*?filedetails\/\?id=(\d{6,})/g)].map((m) => m[1])
+  return [...new Set(blocks)].slice(0, 30)
+}
+
 export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapter {
   const searchCache = new Map<string, { at: number; results: ModSearchResult[] }>()
 
@@ -89,6 +102,14 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
     },
 
     sorts: ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated'],
+    sortLabels: {
+      endorsed: 'Top Rated',
+      downloads: 'Most Subscribed',
+      downloads_recent: 'Most Popular, 30 days',
+      trending: 'Most Popular, 1 week',
+      newest: 'Most Recent',
+      updated: 'Last Updated'
+    },
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const app = await appId(gameId)
@@ -109,7 +130,7 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
       const url = `https://steamcommunity.com/workshop/browse/?appid=${app}&searchtext=${encodeURIComponent(q)}&browsesort=${browsesort}&section=readytouseitems&days=${days}&numperpage=30`
       const html = await ctx.text(url)
       if (/too many requests/i.test(html)) throw new Error('Steam is rate limiting Workshop searches. Wait a minute and try again.')
-      const ids = [...new Set([...html.matchAll(/(?:filedetails\/\?id=|publishedfileid\\?"\s*:\s*\\?")(\d{6,})/g)].map((m) => m[1]))].slice(0, 30)
+      const ids = workshopBrowseIds(html)
       const details = (await fileDetails(ctx, ids)).filter((d) => d.result === 1 && String(d.consumer_app_id) === app)
       // Keep Steam's order (the page's order is the sort).
       const rank = new Map(ids.map((id, i) => [id, i]))

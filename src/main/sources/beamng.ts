@@ -2,7 +2,6 @@
 // redirect to the file. BeamNG loads mods as zip files, which the BeamNG preset keeps packed.
 
 import type { ModDetails, ModSearchResult, ModSort, SourceGameBinding } from '@shared/types'
-import { sortResults } from '@shared/sort'
 import type { AdapterContext, ModSourceAdapter } from './types'
 import { decodeEntities, toPlainText } from './http'
 
@@ -118,6 +117,9 @@ export function createBeamngAdapter(ctx: AdapterContext): ModSourceAdapter {
     },
 
     sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
+    sortLabels: { endorsed: 'Rating', downloads: 'Downloads', newest: 'Submission Date', updated: 'Latest updates' },
+    // The site's search only orders by relevance or date.
+    querySorts: ['relevance', 'updated'],
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       await requireBeamng(gameId)
@@ -127,11 +129,9 @@ export function createBeamngAdapter(ctx: AdapterContext): ModSourceAdapter {
         const ORDER: Partial<Record<ModSort, string>> = { relevance: 'download_count', endorsed: 'rating_weighted', downloads: 'download_count', newest: 'resource_date', updated: 'last_update' }
         return parseResourceList(await ctx.text(`${BASE}resources/?order=${ORDER[sort] ?? 'download_count'}`))
       }
-      // The site's search orders by relevance or date only; other orders are sorted from what it found.
       const html = await ctx.text(`${BASE}search/search?keywords=${encodeURIComponent(q)}&type=resource_update&order=${sort === 'updated' ? 'date' : 'relevance'}`)
       if (/No results found/i.test(html)) return []
-      const found = parseSearchResults(html)
-      return sort === 'relevance' || sort === 'updated' ? found : sortResults(found, sort)
+      return parseSearchResults(html)
     },
 
     async getModDetails(modId): Promise<ModDetails> {

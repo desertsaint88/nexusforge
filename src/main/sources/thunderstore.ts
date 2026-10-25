@@ -110,8 +110,9 @@ export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter
         .map(({ c }) => ({ value: c.identifier, label: c.name }))
     },
 
-    // No trending list on Thunderstore; NexusForge approximates it from the newest packages' ratings.
+    // Thunderstore has no trending list, so NexusForge doesn't offer one for it.
     sorts: ['relevance', 'endorsed', 'downloads', 'newest', 'updated'],
+    sortLabels: { endorsed: 'Top rated', downloads: 'Most downloaded', newest: 'Newest', updated: 'Last updated' },
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const c = await community(gameId)

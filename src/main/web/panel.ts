@@ -116,6 +116,11 @@ export function isPanelShown(id: string): boolean {
   return shownId === id
 }
 
+/** The page is still registered in the panel (shown or waiting in the background). */
+export function isPanelEntry(id: string): boolean {
+  return entries.has(id)
+}
+
 export function setPanelHint(id: string, hint: string): void {
   const e = entries.get(id)
   if (!e || e.hint === hint) return

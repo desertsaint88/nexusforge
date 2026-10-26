@@ -490,10 +490,10 @@ export async function launchGame(id: string): Promise<void> {
   if (game.launch.kind === 'url' || game.launch.kind === 'appx') {
     if (game.launch.kind === 'url') await shell.openExternal(game.launch.url)
     else spawn('explorer.exe', [`shell:AppsFolder\\${game.launch.aumid}`], { detached: true, stdio: 'ignore' }).unref()
-    // Steam may update first, so the game gets a few minutes to appear. Steam keeps its own play time.
+    // The game gets 90 s to appear (Steam may check for updates first). Steam keeps its own play time.
     running.set(id, { startedAt: Date.now() })
     emit('library:running', runningGames())
-    if (!followSession(id, game, game.platform !== 'steam', 180_000)) endSession(id, undefined, false)
+    if (!followSession(id, game, game.platform !== 'steam', 90_000)) endSession(id, undefined, false)
   } else {
     const exe = game.launch.exe || game.exePath
     if (!exe || !(await exists(exe))) throw new Error('The game executable is missing. Set it in the game settings.')

@@ -18,7 +18,8 @@ const archive = join(base, 'Cool Mod.7z')
 execFileSync(join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-a', '-c', '-f', archive, '-C', join(base, 'src'), 'Cool Mod'])
 
 const app = await electron.launch({
-  executablePath: join(root, 'release', 'win-unpacked', 'NexusForge.exe'),
+  // NEXUSFORGE_PACKAGED_DIR checks a build in another folder (e.g. release-next while the app is open).
+  executablePath: join(process.env.NEXUSFORGE_PACKAGED_DIR ?? join(root, 'release'), 'win-unpacked', 'NexusForge.exe'),
   env: { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata'), NEXUSFORGE_NO_CLIPBOARD: '1' }
 })
 const page = await app.firstWindow()

@@ -7,7 +7,7 @@ import { app, session, WebContentsView, type DownloadItem, type Session, type We
 import { join } from 'node:path'
 import { safeName, shortId } from '../util/fs'
 import { scoped } from '../logger'
-import { addPanelEntry, isPanelShown, markInteractive, removePanelEntry, setPanelBlocked, setPanelHint, showPanelEntry } from './panel'
+import { addPanelEntry, isPanelEntry, isPanelShown, markInteractive, removePanelEntry, setPanelBlocked, setPanelHint, showPanelEntry } from './panel'
 import { PAGE_HELPERS, type PageHelper, type PageHelperState } from './helpers'
 
 const log = scoped('browser')
@@ -363,8 +363,9 @@ export function openCapture(opts: {
     closedByUs = true
     const d = capture.download
     if (d && d.getState() !== 'completed' && d.getState() !== 'cancelled') d.cancel()
-    removePanelEntry(opts.id)
-    if (!wc.isDestroyed()) wc.close()
+    // Still in the panel: removing the entry closes the page. Already off screen (download running): close it here.
+    if (isPanelEntry(opts.id)) removePanelEntry(opts.id)
+    else if (!wc.isDestroyed()) wc.close()
   }
 
   const needsUser = (hint: string, show: boolean) => {

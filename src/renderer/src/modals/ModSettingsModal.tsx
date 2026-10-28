@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { FileArchive, FolderOpen, Puzzle } from 'lucide-react'
 import type { Game, InstalledMod, ModFileEntry } from '@shared/types'
 import { invoke } from '../lib/api'
-import { formatBytes, relativeTime } from '../lib/format'
+import { cn, formatBytes, relativeTime } from '../lib/format'
 import { toast } from '../store/ui'
 import { useMods } from '../store/mods'
 import { Modal } from '../components/Modal'
@@ -11,6 +11,8 @@ import { Select } from '../components/Popover'
 
 export function ModSettingsModal({ game, mod, onClose }: { game: Game; mod?: InstalledMod; onClose(): void }) {
   const load = useMods((s) => s.load)
+  const info = useMods((s) => s.integration[game.id])
+  const targetLabel = (id: string) => info?.targets.find((t) => t.id === id)?.label ?? (id === 'game' ? 'Game folder' : id)
   const [name, setName] = useState('')
   const [version, setVersion] = useState('')
   const [root, setRoot] = useState('')
@@ -99,6 +101,31 @@ export function ModSettingsModal({ game, mod, onClose }: { game: Game; mod?: Ins
             </Badge>
           )}
         </div>
+        {(mod.checks ?? []).length > 0 && (
+          <div className="space-y-1.5 rounded-xl border border-white/[0.06] bg-black/20 px-4 py-3">
+            {(mod.checks ?? []).map((c) => (
+              <p key={c.message} className={cn('text-[12.5px] leading-relaxed', c.level === 'error' ? 'text-rose-200/90' : c.level === 'warning' ? 'text-amber-200/90' : 'text-ink-300')}>
+                {c.level === 'error' ? "Can't deploy: " : c.level === 'warning' ? 'Warning: ' : ''}
+                {c.message}
+              </p>
+            ))}
+          </div>
+        )}
+        {(mod.routes ?? []).length > 0 && (
+          <div className="text-[12.5px] leading-relaxed text-ink-300">
+            <div className="mb-1 font-medium text-ink-200">Where it goes</div>
+            {(mod.routes ?? []).map((r) => (
+              <div key={`${r.from}->${r.target}:${r.to}`} className="flex gap-2 font-mono text-[11.5px]">
+                <span className="truncate text-ink-400">{r.from || '(mod root)'}</span>
+                <span className="text-ink-500">→</span>
+                <span className="truncate">
+                  {targetLabel(r.target)}
+                  {r.to ? ` / ${r.to}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="grid grid-cols-[1fr_160px] gap-3">
           <Field label="Name">
             <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -111,7 +138,7 @@ export function ModSettingsModal({ game, mod, onClose }: { game: Game; mod?: Ins
           label="Content folder"
           hint={
             <>
-              The folder inside the mod whose contents go into <span className="font-mono text-ink-300">{game.modding.targetDir}</span>. NexusForge picks it automatically; change it if a mod lands in the wrong place.
+              The folder inside the mod whose contents go into the game. NexusForge lays mods out by the game's rules; picking a folder by hand maps it onto <span className="font-mono text-ink-300">{info?.targets.find((t) => t.id === 'game')?.dir ?? game.modding.targetDir}</span> as it is, so only do that if a mod lands in the wrong place.
             </>
           }
         >
@@ -142,6 +169,19 @@ export function ModSettingsModal({ game, mod, onClose }: { game: Game; mod?: Ins
             )}
           </div>
         </div>
+        {(mod.skipped ?? []).length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[12.5px] font-medium text-ink-200">Left out of the game ({(mod.skipped ?? []).length})</div>
+            <div className="max-h-32 overflow-y-auto rounded-xl border border-white/[0.06] bg-black/30 p-2">
+              {(mod.skipped ?? []).slice(0, 200).map((s) => (
+                <div key={s.path} className="flex justify-between gap-3 rounded-md px-2 py-1 text-[11.5px] hover:bg-white/[0.04]">
+                  <span className="selectable truncate font-mono text-ink-300">{s.path}</span>
+                  <span className="shrink-0 text-ink-500">{s.reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   )

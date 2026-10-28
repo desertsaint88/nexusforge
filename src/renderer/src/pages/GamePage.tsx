@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Clock, FolderOpen, Layers, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert, Wrench } from 'lucide-react'
-import type { Game } from '@shared/types'
+import type { Game, LaunchOption } from '@shared/types'
 import { useLibrary } from '../store/library'
 import { activeProfileOf, useMods } from '../store/mods'
 import { useNav, type GameTab } from '../store/ui'
 import { invoke, pathForFile } from '../lib/api'
 import { cn, formatBytes, formatPlaytime, relativeTime } from '../lib/format'
-import { Badge, IconButton, PlayButton } from '../components/ui'
+import { Badge, Button, IconButton, PlayButton } from '../components/ui'
 import { GameLogo, HeroArt } from '../components/GameArt'
 import { EmptyState, PlatformBadge, Tabs } from '../components/Chrome'
 import { ModsTab } from './game/ModsTab'
@@ -100,7 +100,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
 
   return (
     <div className="relative h-full overflow-y-auto">
-      <Hero game={game} running={running} onLaunch={() => void launch(game.id)} onFavorite={() => void update(game.id, { favorite: !game.favorite })} onSettings={() => setCurrent('settings')} />
+      <Hero game={game} running={running} onLaunch={(variant) => void launch(game.id, variant)} onFavorite={() => void update(game.id, { favorite: !game.favorite })} onSettings={() => setCurrent('settings')} />
 
       <div className="relative -mt-6 px-8 pb-10">
         <div className="mb-6 flex gap-3">
@@ -115,12 +115,24 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
               : `${enabled} of ${state.mods.length} enabled${outside ? ` · +${outside} in folder` : ''}`
             }
           />
-          <Stat
-            icon={status?.deployed ? status.inSync ? <CircleCheck /> : <CircleAlert /> : <Rocket />}
-            label="Deployment"
-            tone={status?.deployed ? (status.inSync ? 'ok' : 'warn') : undefined}
-            value={deploying ? 'Deploying…' : !status ? '—' : status.deployed ? (status.inSync ? `${status.fileCount.toLocaleString()} files live` : 'Out of date, redeploy') : 'Not deployed'}
-          />
+          {(() => {
+            const failed = status?.last && (status.last.outcome === 'failed' || status.last.outcome === 'rolled_back')
+            const verified = Boolean(status?.deployed && status.inSync && !failed && Object.values(status.perMod).some((s) => s === 'verified'))
+            return (
+              <Stat
+                icon={failed ? <CircleAlert /> : status?.deployed ? status.inSync ? <CircleCheck /> : <CircleAlert /> : <Rocket />}
+                label="Deployment"
+                tone={failed ? 'warn' : status?.deployed ? (status.inSync ? 'ok' : 'warn') : undefined}
+                value={
+                  deploying ? 'Deploying…'
+                  : !status ? '—'
+                  : failed ? (status.last!.outcome === 'rolled_back' ? 'Last deploy rolled back' : 'Last deploy failed')
+                  : status.deployed ? (status.inSync ? `${status.fileCount.toLocaleString()} files ${verified ? 'verified' : 'live'}` : 'Out of date, redeploy')
+                  : 'Not deployed'
+                }
+              />
+            )
+          })()}
         </div>
 
         <Tabs<GameTab>
@@ -174,8 +186,12 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
   )
 }
 
-function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game; running: boolean; onLaunch(): void; onFavorite(): void; onSettings(): void }) {
+function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game; running: boolean; onLaunch(variant?: LaunchOption['id']): void; onFavorite(): void; onSettings(): void }) {
   const modInfo = useLibrary((s) => s.detected[game.id])
+  // Games with a mod loader start two ways (Terraria / tModLoader, BepInEx on / off); the main one is the big button.
+  const options = useMods((s) => s.integration[game.id]?.launchOptions) ?? []
+  const primary = options.find((o) => o.primary && o.available) ?? options.find((o) => o.available)
+  const others = options.filter((o) => o !== primary && (o.available || o.id === 'modded'))
   return (
     // Shorter on short windows, so the mod list starts above the fold.
     <div className="relative h-[clamp(250px,44vh,360px)] overflow-hidden">
@@ -210,7 +226,28 @@ function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game;
           </div>
           <GameLogo game={game} />
           <div className="mt-4 flex items-center gap-2 [@media(min-height:860px)]:mt-6">
-            <PlayButton size="lg" className="min-w-[170px]" onClick={onLaunch} disabled={running || game.missing} label={running ? 'Running' : 'Play'} />
+            <PlayButton
+              size="lg"
+              className="min-w-[170px]"
+              onClick={() => onLaunch(primary?.id)}
+              disabled={running || game.missing}
+              title={primary?.description}
+              label={running ? 'Running' : (primary?.label ?? 'Play')}
+            />
+            {!running &&
+              others.map((o) => (
+                <Button
+                  key={o.id}
+                  size="lg"
+                  variant="outline"
+                  className="bg-black/40 backdrop-blur-md"
+                  disabled={!o.available || game.missing}
+                  title={o.available ? o.description : o.reason}
+                  onClick={() => onLaunch(o.id)}
+                >
+                  {o.label}
+                </Button>
+              ))}
             <IconButton label={game.favorite ? 'Unfavorite' : 'Favorite'} onClick={onFavorite} className={cn('size-12 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md', game.favorite && 'text-amber-300')}>
               <Star className={cn('size-5', game.favorite && 'fill-current')} />
             </IconButton>

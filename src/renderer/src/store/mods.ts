@@ -1,5 +1,18 @@
 import { create } from 'zustand'
-import type { ConflictReport, DeployProgress, DeployReport, DeployStatus, InstalledMod, LinkCapabilities, ModUpdate, Profile } from '@shared/types'
+import type {
+  ConflictReport,
+  DeployProgress,
+  DeployReport,
+  DeployStatus,
+  InstalledMod,
+  IntegrationInfo,
+  LaunchCheck,
+  LinkCapabilities,
+  ModUpdate,
+  Profile,
+  SetupProgress,
+  ShortcutInfo
+} from '@shared/types'
 import { invoke, on } from '../lib/api'
 import { toast } from './ui'
 import { useDownloads } from './downloads'
@@ -15,11 +28,41 @@ export interface GameMods {
   loaded: boolean
 }
 
+/** What a deployment stage is doing, in words. */
+export const STAGE_LABEL: Record<string, string> = {
+  validate: 'Checking the game…',
+  loader: 'Installing the mod loader…',
+  recover: 'Undoing an interrupted deployment…',
+  plan: 'Working out what changes…',
+  preflight: 'Checking folders, rights and free space…',
+  remove: 'Taking out files that are no longer wanted…',
+  place: 'Putting files in place…',
+  configure: "Updating the mod loader's settings…",
+  verify: 'Checking every file…',
+  record: 'Saving the result…',
+  rollback: 'Something failed: putting the previous state back…',
+  done: 'Finished'
+}
+
 interface ModsState {
   byGame: Record<string, GameMods>
   deploying: Record<string, DeployProgress | 'starting' | undefined>
   installing: Record<string, number>
   lastReport: Record<string, DeployReport | undefined>
+  /** How NexusForge mods each game (loaders, deploy folders, launch options). */
+  integration: Record<string, IntegrationInfo | undefined>
+  /** The running (or last) setup operation per game: loader install, deploy, verify. */
+  operation: Record<string, SetupProgress | undefined>
+  /** What the mod loader logged at the last start. */
+  launchCheck: Record<string, LaunchCheck | undefined>
+  shortcuts: Record<string, ShortcutInfo[] | undefined>
+  /** Loader install/remove buttons that are busy, "<gameId>:<loaderId>". */
+  loaderBusy: Record<string, boolean>
+  inspect(gameId: string, fresh?: boolean): Promise<IntegrationInfo | undefined>
+  installLoader(gameId: string, loaderId: string): Promise<void>
+  removeLoader(gameId: string, loaderId: string): Promise<void>
+  createShortcut(gameId: string, variant: 'vanilla' | 'modded', where: 'startmenu' | 'desktop'): Promise<void>
+  cancel(gameId: string): Promise<void>
   /** Newer files for installed mods, per game (undefined = not checked yet). */
   updates: Record<string, ModUpdate[] | undefined>
   checkingUpdates: Record<string, boolean>
@@ -64,9 +107,79 @@ export const useMods = create<ModsState>((set, get) => {
     deploying: {},
     installing: {},
     lastReport: {},
+    integration: {},
+    operation: {},
+    launchCheck: {},
+    shortcuts: {},
+    loaderBusy: {},
     updates: {},
     checkingUpdates: {},
     updating: {},
+
+    async inspect(gameId, fresh) {
+      try {
+        const [info, shortcuts, last, op] = await Promise.all([
+          invoke('integration:inspect', gameId, fresh),
+          invoke('integration:shortcuts', gameId).catch(() => [] as ShortcutInfo[]),
+          invoke('integration:lastLaunch', gameId).catch(() => undefined),
+          invoke('integration:operation', gameId).catch(() => undefined)
+        ])
+        set({
+          integration: { ...get().integration, [gameId]: info },
+          shortcuts: { ...get().shortcuts, [gameId]: shortcuts },
+          launchCheck: { ...get().launchCheck, [gameId]: last },
+          operation: op ? { ...get().operation, [gameId]: op } : get().operation
+        })
+        return info
+      } catch (err) {
+        fail('Could not check the game setup')(err)
+        return undefined
+      }
+    },
+
+    async installLoader(gameId, loaderId) {
+      const key = `${gameId}:${loaderId}`
+      set({ loaderBusy: { ...get().loaderBusy, [key]: true } })
+      try {
+        const report = await invoke('integration:installLoader', gameId, loaderId)
+        if (report) set({ lastReport: { ...get().lastReport, [gameId]: report } })
+      } catch (err) {
+        // The main process already showed the failed step in the setup panel; the toast says what to do.
+        fail('Installing the mod loader failed')(err)
+      } finally {
+        set({ loaderBusy: { ...get().loaderBusy, [key]: false } })
+        await Promise.all([get().inspect(gameId, true), get().load(gameId)])
+      }
+    },
+
+    async removeLoader(gameId, loaderId) {
+      const key = `${gameId}:${loaderId}`
+      set({ loaderBusy: { ...get().loaderBusy, [key]: true } })
+      try {
+        const info = await invoke('integration:removeLoader', gameId, loaderId)
+        set({ integration: { ...get().integration, [gameId]: info } })
+        toast.success('Mod loader removed')
+      } catch (err) {
+        fail('Could not remove the mod loader')(err)
+      } finally {
+        set({ loaderBusy: { ...get().loaderBusy, [key]: false } })
+        await get().load(gameId)
+      }
+    },
+
+    async createShortcut(gameId, variant, where) {
+      try {
+        const s = await invoke('integration:shortcut', gameId, variant, where)
+        toast.success(`Shortcut "${s.label}" ${where === 'desktop' ? 'on the desktop' : 'in the Start menu'}`, s.path)
+        set({ shortcuts: { ...get().shortcuts, [gameId]: await invoke('integration:shortcuts', gameId) } })
+      } catch (err) {
+        fail('Could not create the shortcut')(err)
+      }
+    },
+
+    async cancel(gameId) {
+      await invoke('deploy:cancel', gameId).catch(() => {})
+    },
 
     async checkUpdates(gameId, force) {
       if (get().checkingUpdates[gameId]) return
@@ -106,7 +219,7 @@ export const useMods = create<ModsState>((set, get) => {
       try {
         const [mods, { profiles, activeId }] = await Promise.all([invoke('mods:list', gameId), invoke('profiles:list', gameId)])
         patchGame(gameId, { mods, profiles, activeId, loaded: true })
-        await get().refreshMeta(gameId)
+        await Promise.all([get().refreshMeta(gameId), get().integration[gameId] ? Promise.resolve() : get().inspect(gameId)])
       } catch (err) {
         fail('Could not load mods')(err)
       }
@@ -208,20 +321,24 @@ export const useMods = create<ModsState>((set, get) => {
     async deploy(gameId) {
       set({ deploying: { ...get().deploying, [gameId]: 'starting' } })
       try {
-        const report = await invoke('deploy:run', gameId)
+        // One click: installs the mod loader the enabled mods need, deploys, verifies. The result card under the
+        // toolbar shows the details; failures are also announced by the main process.
+        const report = await invoke('deploy:setup', gameId)
         set({ lastReport: { ...get().lastReport, [gameId]: report } })
-        const total = report.methods.symlink + report.methods.hardlink + report.methods.copy
-        if (report.errors.length) toast.warning(`Deployed with ${report.errors.length} problem${report.errors.length === 1 ? '' : 's'}`, report.errors[0])
-        else toast.success('Mods deployed', `${total.toLocaleString()} files live · ${report.placed} placed, ${report.removed} removed in ${(report.durationMs / 1000).toFixed(1)} s`)
-        for (const f of report.fallbacks) toast.info('Deployment fallback', f)
-        if (report.rescued) toast.warning(`${report.rescued} changed file${report.rescued === 1 ? '' : 's'} kept`, 'Files the game changed after deployment were moved to the overwrite folder instead of being deleted.')
+        const skipped = report.notes.filter((n) => n.includes('was not deployed'))
+        if (report.outcome === 'verified') {
+          if (skipped.length) toast.warning(report.title, skipped.join(' '))
+          else toast.success(report.verification?.loadVerified ? 'Deployed and verified' : 'Deployed', report.title)
+        } else if (report.outcome === 'nothing') {
+          toast.info(report.title)
+        }
         return report
       } catch (err) {
         fail('Deployment failed')(err)
         return undefined
       } finally {
         set({ deploying: { ...get().deploying, [gameId]: undefined } })
-        await get().refreshMeta(gameId)
+        await Promise.all([get().refreshMeta(gameId), get().inspect(gameId, true)])
       }
     },
 
@@ -229,15 +346,17 @@ export const useMods = create<ModsState>((set, get) => {
       set({ deploying: { ...get().deploying, [gameId]: 'starting' } })
       try {
         const report = await invoke('deploy:purge', gameId)
-        if (report.errors.length) toast.warning('Purged with problems', report.errors[0])
-        else toast.success('Game restored', `${report.removed.toLocaleString()} mod files removed, original files restored.`)
+        set({ lastReport: { ...get().lastReport, [gameId]: report } })
+        if (report.outcome === 'failed' || report.outcome === 'rolled_back') toast.error(report.problem?.title ?? 'Purge failed', report.problem?.detail ?? report.title)
+        else if (report.errors.length) toast.warning('Purged with problems', report.errors[0])
+        else toast.success('Game restored', report.removed || report.kept ? `${report.removed.toLocaleString()} mod files removed, original files restored.${report.kept ? ` ${report.kept} world/save file(s) you played were kept.` : ''}` : 'Nothing was deployed.')
         return report
       } catch (err) {
         fail('Purge failed')(err)
         return undefined
       } finally {
         set({ deploying: { ...get().deploying, [gameId]: undefined } })
-        await get().refreshMeta(gameId)
+        await Promise.all([get().refreshMeta(gameId), get().inspect(gameId, true)])
       }
     },
 
@@ -288,18 +407,32 @@ export function subscribeMods(): void {
   subscribed = true
   on('deploy:progress', (p) => {
     useMods.setState({ deploying: { ...useMods.getState().deploying, [p.gameId]: p } })
-    // Deploys started elsewhere (another view, a mod removal) end with 'finishing'; clear the indicator then.
-    if (p.phase === 'finishing') {
+    // Deploys started elsewhere (after a download, a mod removal) end with 'done'; clear the indicator then.
+    if (p.phase === 'done') {
       setTimeout(() => {
         const current = useMods.getState().deploying[p.gameId]
-        if (current && current !== 'starting' && current.phase === 'finishing') {
+        if (current && current !== 'starting' && current.phase === 'done') {
           useMods.setState({ deploying: { ...useMods.getState().deploying, [p.gameId]: undefined } })
           void useMods.getState().refreshMeta(p.gameId)
         }
       }, 600)
     }
   })
+  on('setup:progress', (p) => {
+    const s = useMods.getState()
+    useMods.setState({ operation: { ...s.operation, [p.gameId]: p } })
+    if (p.done && s.byGame[p.gameId]) {
+      void s.refreshMeta(p.gameId)
+      void s.inspect(p.gameId, true)
+    }
+  })
+  on('integration:launch', ({ gameId, check }) => {
+    useMods.setState({ launchCheck: { ...useMods.getState().launchCheck, [gameId]: check } })
+  })
   on('mods:changed', ({ gameId }) => {
-    if (useMods.getState().byGame[gameId]) void useMods.getState().load(gameId)
+    if (!useMods.getState().byGame[gameId]) return
+    void useMods.getState().load(gameId)
+    // A new mod can make a loader required (BepInEx, tModLoader).
+    void useMods.getState().inspect(gameId)
   })
 }

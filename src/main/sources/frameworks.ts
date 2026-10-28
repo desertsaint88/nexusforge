@@ -103,16 +103,126 @@ const FRAMEWORKS: Framework[] = [
       if (!/^MelonLoader\.x(64|86)\.zip$/i.test(asset)) return undefined
       return asset.toLowerCase().includes(rt.arch) ? 0 : undefined
     }
+  },
+  // The ones below go where their game integration says (Unreal: Binaries/Win64; Cyberpunk: the game root).
+  {
+    id: 'ue4ss',
+    name: 'UE4SS',
+    repo: 'UE4SS-RE/RE-UE4SS',
+    summary: 'Script system and mod loader for Unreal Engine 4/5 games (Lua and C++ mods, Blueprint "LogicMods").',
+    url: 'https://github.com/UE4SS-RE/RE-UE4SS',
+    marker: ['dwmapi.dll'],
+    rank: (asset) => (/^UE4SS_v[\d.]+(-\d+-g[0-9a-f]+)?\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'cet',
+    name: 'Cyber Engine Tweaks',
+    repo: 'maximegmd/CyberEngineTweaks',
+    summary: 'Cyberpunk 2077 scripting framework (Lua mods, in-game console and overlay).',
+    url: 'https://github.com/maximegmd/CyberEngineTweaks',
+    marker: ['plugins/cyber_engine_tweaks.asi'],
+    rank: (asset) => (/^cet_[\d._]+\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'red4ext',
+    name: 'RED4ext',
+    repo: 'WopsS/RED4ext',
+    summary: 'Cyberpunk 2077 script extender; ArchiveXL, TweakXL and Codeware run on it.',
+    url: 'https://github.com/WopsS/RED4ext',
+    marker: ['../../red4ext/RED4ext.dll'],
+    rank: (asset) => (/^red4ext[-_][\d.]+\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'redscript',
+    name: 'redscript',
+    repo: 'jac3km4/redscript',
+    summary: 'Compiler for Cyberpunk 2077 script mods (.reds files in r6/scripts).',
+    url: 'https://github.com/jac3km4/redscript',
+    marker: ['../../engine/tools/scc.exe'],
+    rank: (asset) => (/^redscript-v[\d.]+-windows\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'archivexl',
+    name: 'ArchiveXL',
+    repo: 'psiberx/cp2077-archive-xl',
+    summary: 'Cyberpunk 2077 framework for new items, appearances and resources (.xl files).',
+    url: 'https://github.com/psiberx/cp2077-archive-xl',
+    marker: ['../../red4ext/plugins/ArchiveXL/ArchiveXL.dll'],
+    rank: (asset) => (/^ArchiveXL-[\d.]+\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'tweakxl',
+    name: 'TweakXL',
+    repo: 'psiberx/cp2077-tweak-xl',
+    summary: 'Cyberpunk 2077 TweakDB editing (r6/tweaks).',
+    url: 'https://github.com/psiberx/cp2077-tweak-xl',
+    marker: ['../../red4ext/plugins/TweakXL/TweakXL.dll'],
+    rank: (asset) => (/^TweakXL-[\d.]+\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'codeware',
+    name: 'Codeware',
+    repo: 'psiberx/cp2077-codeware',
+    summary: 'Cyberpunk 2077 library many redscript mods build on.',
+    url: 'https://github.com/psiberx/cp2077-codeware',
+    marker: ['../../red4ext/plugins/Codeware/Codeware.dll'],
+    rank: (asset) => (/^Codeware-[\d.]+\.zip$/i.test(asset) ? 0 : undefined)
+  },
+  {
+    id: 'shvdn',
+    name: 'Script Hook V .NET',
+    repo: 'scripthookvdotnet/scripthookvdotnet',
+    summary: 'Runs GTA V scripts written in C# / VB (.dll and .cs files in the scripts folder). Needs Script Hook V.',
+    url: 'https://github.com/scripthookvdotnet/scripthookvdotnet',
+    marker: ['ScriptHookVDotNet.asi'],
+    rank: (asset) => (/^ScriptHookVDotNet\.zip$/i.test(asset) ? 0 : undefined)
   }
 ]
 
+/** Repository of a known loader (for integrations that install it). */
+export function frameworkRepo(id: string): string | undefined {
+  return FRAMEWORKS.find((f) => f.id === id)?.repo
+}
+
 const byId = (id: string) => FRAMEWORKS.find((f) => f.id === id)
+
+/** Release assets of a loader that fit the game, best first (matching build, then stable, then newest). */
+export function fittingAssets<R extends { tag_name: string; prerelease: boolean; published_at: string; assets: Array<{ name: string }> }>(
+  frameworkId: string,
+  list: R[],
+  rt: GameRuntime
+): Array<{ release: R; asset: R['assets'][number] }> {
+  const f = byId(frameworkId)
+  if (!f) return []
+  const fits: Array<{ release: R; asset: R['assets'][number]; rank: number }> = []
+  for (const r of list) {
+    for (const a of r.assets) {
+      const rank = f.rank(a.name, rt)
+      if (rank !== undefined) fits.push({ release: r, asset: a, rank })
+    }
+  }
+  fits.sort((a, b) => a.rank - b.rank || Number(a.release.prerelease) - Number(b.release.prerelease) || b.release.published_at.localeCompare(a.release.published_at))
+  return fits
+}
 
 /** Maps a requirement a mod site only links to ("BepInEx", "MelonLoader") onto the built-in installer. */
 export function frameworkDependency(dep: ModDependency): ModDependency | undefined {
   if (dep.installable && dep.sourceId) return undefined
   const text = `${dep.name} ${dep.url ?? ''}`
-  const f = /bepinex/i.test(text) ? byId('bepinex') : /melon ?loader/i.test(text) ? byId('melonloader') : undefined
+  const names: Array<[RegExp, string]> = [
+    [/bepinex/i, 'bepinex'],
+    [/melon ?loader/i, 'melonloader'],
+    [/ue4ss/i, 'ue4ss'],
+    [/cyber ?engine ?tweaks|\bCET\b/i, 'cet'],
+    [/red4ext/i, 'red4ext'],
+    [/redscript/i, 'redscript'],
+    [/archive ?xl/i, 'archivexl'],
+    [/tweak ?xl/i, 'tweakxl'],
+    [/codeware/i, 'codeware'],
+    [/script ?hook ?v ?(\.|dot) ?net|shvdn/i, 'shvdn']
+  ]
+  const hit = names.find(([re]) => re.test(text))
+  const f = hit ? byId(hit[1]) : undefined
   if (!f) return undefined
   return { ...dep, sourceId: FRAMEWORKS_ID, modId: f.id, installable: true, note: dep.note ? `${dep.note} · NexusForge installs it` : 'NexusForge installs the right build for this game' }
 }
@@ -143,7 +253,7 @@ export function createFrameworksAdapter(ctx: AdapterContext): ModSourceAdapter {
   const adapter: ModSourceAdapter = {
     id: FRAMEWORKS_ID,
     name: 'Mod loaders',
-    description: 'BepInEx and MelonLoader from their official GitHub releases, in the build that fits the game (Unity Mono or IL2CPP, 64- or 32-bit). No account needed.',
+    description: 'Mod loaders from their official GitHub releases: BepInEx and MelonLoader (in the build that fits the Unity game), UE4SS, Cyber Engine Tweaks, RED4ext, redscript, ArchiveXL, TweakXL, Codeware and Script Hook V .NET. No account needed.',
     homepage: 'https://github.com/BepInEx/BepInEx',
 
     async search(query): Promise<ModSearchResult[]> {
@@ -185,8 +295,10 @@ export function createFrameworksAdapter(ctx: AdapterContext): ModSourceAdapter {
       // Best fit first: matching family, then stable releases, then newest.
       fits.sort((a, b) => a.rank - b.rank || Number(b.stable) - Number(a.stable) || (b.v.date ?? '').localeCompare(a.v.date ?? ''))
       const versions = fits.map((x, i) => ({ ...x.v, primary: i === 0 }))
-      const note =
-        rt.unity === 'il2cpp'
+      const unityLoader = f.id === 'bepinex' || f.id === 'melonloader'
+      const note = !unityLoader
+        ? 'NexusForge puts it where this game loads it, under a DLL name no file of the game already uses.'
+        : rt.unity === 'il2cpp'
           ? 'This game is a Unity IL2CPP build, so it gets the IL2CPP edition.'
           : rt.unity === 'mono'
             ? 'This game is a Unity Mono build, so it gets the Mono edition.'

@@ -116,12 +116,16 @@ export function GameSettingsTab({ game, onRemoved }: { game: Game; onRemoved(): 
   const setModding = (patch: Partial<Game['modding']>) => update(game.id, { modding: { ...game.modding, ...patch } })
 
   const strategies: Array<{ value: DeployStrategy; label: ReactNode }> = [
-    { value: 'symlink', label: <>Symlink</> },
+    { value: 'auto', label: <>Automatic</> },
     { value: 'hardlink', label: <>Hardlink</> },
-    { value: 'copy', label: <>Copy</> }
+    { value: 'copy', label: <>Copy</> },
+    { value: 'symlink', label: <>Symlink</> }
   ]
+  const info = useMods((s) => s.integration[game.id])
+  const extraTargets = (info?.targets ?? []).filter((t) => t.id !== 'game')
 
-  const chosenOk = !caps ? undefined : game.modding.strategy === 'symlink' ? caps.symlink : game.modding.strategy === 'hardlink' ? caps.hardlink : true
+  // Symlinks are the only method that can be unavailable; every other choice works (copies as the fallback).
+  const chosenOk = !caps ? undefined : game.modding.strategy === 'symlink' ? caps.symlink : true
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -159,24 +163,44 @@ export function GameSettingsTab({ game, onRemoved }: { game: Game; onRemoved(): 
         title="Mod deployment"
         subtitle="Mods stay in NexusForge's storage. Deploying links or copies them into the folder below, and purging removes them again."
       >
-        <PathField
-          label="Deploy into"
-          value={game.modding.targetDir}
-          hint="Usually the game folder, or its Data / Mods sub-folder. If you change it, the next deploy cleans the old location first."
-          onChange={(v) => void setModding({ targetDir: v })}
-          onPick={async () => {
-            const d = await invoke('app:pickFolder', { title: 'Where should mods be deployed?', defaultPath: game.modding.targetDir })
-            if (d) void setModding({ targetDir: d })
-          }}
-        />
+        {info && info.integrationId !== 'generic' ? (
+          <Field
+            label="Deploy into"
+            hint={`${info.name}: NexusForge puts each kind of file where ${game.name} loads it, so this is not a single folder. If the game moves, rescan the library; the next deploy moves the files.`}
+          >
+            <div className="space-y-1.5 rounded-xl border border-white/[0.06] bg-black/20 px-3.5 py-2.5">
+              {(info.targets ?? []).map((t) => (
+                <div key={t.id} className="flex items-center gap-3 text-[12.5px]">
+                  <span className="w-36 shrink-0 text-ink-300">{t.label}</span>
+                  <button className="min-w-0 truncate text-left font-mono text-[11.5px] text-ink-400 hover:text-ink-100" title={t.dir} onClick={() => void invoke('app:openPath', t.dir)}>
+                    {t.dir}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Field>
+        ) : (
+          <PathField
+            label="Deploy into"
+            value={game.modding.targetDir}
+            hint={`Usually the game folder, or its Data / Mods sub-folder. If you change it, the next deploy cleans the old location first.${extraTargets.length ? ` Also used: ${extraTargets.map((t) => t.label).join(', ')}.` : ''}`}
+            onChange={(v) => void setModding({ targetDir: v })}
+            onPick={async () => {
+              const d = await invoke('app:pickFolder', { title: 'Where should mods be deployed?', defaultPath: game.modding.targetDir })
+              if (d) void setModding({ targetDir: d })
+            }}
+          />
+        )}
         <Field
           label="Method"
           hint={
-            game.modding.strategy === 'symlink'
-              ? 'Symlinks use no extra disk space and toggle instantly. Windows allows them with Developer Mode or admin rights; otherwise NexusForge falls back to hardlinks, then copies.'
-              : game.modding.strategy === 'hardlink'
-                ? 'Hardlinks use no extra space and need no special rights, but mod storage must be on the same drive as the game.'
-                : 'Copies work everywhere and suit games that reject links, but they duplicate the files on disk.'
+            game.modding.strategy === 'auto'
+              ? 'Hardlinks when mod storage and the game are on the same drive, copies otherwise. Needs no special Windows rights and no Developer Mode. Saves and worlds are always copied.'
+              : game.modding.strategy === 'symlink'
+                ? 'Only works when Windows lets this account create symlinks (administrators, or with Developer Mode). If it doesn\'t, NexusForge uses hardlinks and copies instead; the game gets the same files either way, so there is nothing to switch on.'
+                : game.modding.strategy === 'hardlink'
+                  ? 'Hardlinks use no extra space and need no special rights. On another drive than mod storage (or FAT32/exFAT) files are copied instead.'
+                  : 'Copies work everywhere and suit games that reject links, but they duplicate the files on disk.'
           }
         >
           <Segmented value={game.modding.strategy} options={strategies} onChange={(v) => void setModding({ strategy: v })} />
@@ -188,7 +212,8 @@ export function GameSettingsTab({ game, onRemoved }: { game: Game; onRemoved(): 
               <Badge tone={caps?.symlink ? 'success' : 'neutral'}>Symlinks {caps ? (caps.symlink ? 'available' : 'unavailable') : '…'}</Badge>
               <Badge tone={caps?.hardlink ? 'success' : 'neutral'}>Hardlinks {caps ? (caps.hardlink ? 'available' : 'unavailable') : '…'}</Badge>
             </div>
-            {caps && !caps.symlink && caps.symlinkReason && <p className="mt-2 text-ink-300">{caps.symlinkReason}</p>}
+            {caps?.autoMethod && game.modding.strategy === 'auto' && <p className="mt-2 text-ink-200">{caps.autoMethod}</p>}
+            {caps && !caps.symlink && caps.symlinkReason && game.modding.strategy === 'symlink' && <p className="mt-2 text-ink-300">{caps.symlinkReason}</p>}
             {caps && !caps.hardlink && caps.hardlinkReason && <p className="mt-1 text-ink-300">{caps.hardlinkReason}</p>}
           </div>
           <Button size="sm" variant="ghost" icon={<RefreshCw className="size-3.5" />} onClick={() => (setProbing(true), void probe(game.id).finally(() => setProbing(false)))}>

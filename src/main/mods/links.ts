@@ -1,11 +1,15 @@
 import { promises as fsp } from 'node:fs'
-import { join } from 'node:path'
+import { join, parse, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { LinkCapabilities } from '@shared/types'
 
+const drive = (p: string) => parse(resolve(p)).root.replace(/[\\/]+$/, '')
+
 /**
- * Checks whether symlinks and hardlinks can be created from `sourceDir` (mod storage) into `targetDir` (game).
- * File symlinks on Windows need Developer Mode or admin rights; hardlinks need both folders on the same volume.
+ * Checks which ways of placing files work from `sourceDir` (mod storage) into `targetDir` (game).
+ * Hardlinks need both folders on one drive (NTFS); symlinks need the Windows right "Create symbolic links",
+ * which only administrators and PCs with Developer Mode have. Copies always work. NexusForge never needs
+ * symlinks: 'auto' hardlinks on the same drive and copies otherwise.
  */
 export async function probeLinks(sourceDir: string, targetDir: string): Promise<LinkCapabilities> {
   const tag = randomBytes(4).toString('hex')
@@ -17,7 +21,7 @@ export async function probeLinks(sourceDir: string, targetDir: string): Promise<
     await fsp.mkdir(sourceDir, { recursive: true })
     await fsp.writeFile(src, 'probe')
   } catch (err) {
-    return { symlink: false, hardlink: false, symlinkReason: `Mod storage is not writable: ${(err as Error).message}`, hardlinkReason: 'Mod storage is not writable' }
+    return { symlink: false, hardlink: false, symlinkReason: `Mod storage is not writable: ${(err as Error).message}`, hardlinkReason: 'Mod storage is not writable', autoMethod: 'Mod storage is not writable.' }
   }
   try {
     await fsp.symlink(src, sym, 'file')
@@ -26,7 +30,7 @@ export async function probeLinks(sourceDir: string, targetDir: string): Promise<
     const code = (err as NodeJS.ErrnoException).code
     result.symlinkReason =
       code === 'EPERM'
-        ? 'Windows only allows symlinks with Developer Mode enabled or when running as administrator.'
+        ? 'Not available: Windows only lets administrators (or PCs with Developer Mode) create symlinks. Not needed: hardlinks and copies give the game the same files.'
         : code === 'EACCES' || code === 'ENOENT'
           ? 'The game folder is not writable.'
           : `Symlinks failed (${code ?? 'unknown'}).`
@@ -38,11 +42,14 @@ export async function probeLinks(sourceDir: string, targetDir: string): Promise<
     const code = (err as NodeJS.ErrnoException).code
     result.hardlinkReason =
       code === 'EXDEV'
-        ? 'Mod storage and the game are on different drives. Move mod storage to the same drive to enable hardlinks.'
+        ? `Mod storage (${drive(sourceDir)}) and the game (${drive(targetDir)}) are on different drives, so files are copied. Move mod storage to ${drive(targetDir)} to link instead.`
         : code === 'EACCES' || code === 'ENOENT'
           ? 'The game folder is not writable.'
-          : `Hardlinks failed (${code ?? 'unknown'}).`
+          : `Hardlinks failed (${code ?? 'unknown'}), for example on FAT32/exFAT drives. Files are copied instead.`
   }
   await Promise.allSettled([fsp.unlink(sym), fsp.unlink(hard), fsp.unlink(src)])
+  result.autoMethod = result.hardlink
+    ? 'Automatic hardlinks the files: no extra disk space, no special rights.'
+    : 'Automatic copies the files (mod storage is on another drive or the drive does not support links).'
   return result
 }

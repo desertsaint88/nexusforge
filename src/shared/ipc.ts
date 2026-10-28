@@ -12,6 +12,8 @@ import type {
   Game,
   GameModInfo,
   InstalledMod,
+  IntegrationInfo,
+  LaunchCheck,
   LinkCapabilities,
   ManualGameInput,
   ModDetails,
@@ -26,6 +28,8 @@ import type {
   ScanProgress,
   ScanResult,
   Settings,
+  SetupProgress,
+  ShortcutInfo,
   SitePanelState,
   SourceGameBinding,
   SourceInfo,
@@ -58,7 +62,8 @@ export interface IpcInvokeMap {
   'library:addManual': (input: ManualGameInput) => Game
   'library:update': (id: string, patch: Partial<Pick<Game, 'name' | 'exePath' | 'launchArgs' | 'favorite' | 'hidden' | 'customArt' | 'modding'>>) => Game
   'library:remove': (id: string) => void
-  'library:launch': (id: string) => void
+  /** variant: 'modded' starts the game through its mod loader (tModLoader), 'vanilla' without mods. */
+  'library:launch': (id: string, variant?: 'default' | 'vanilla' | 'modded') => void
   'library:running': () => string[]
   'library:fetchArtwork': (id: string) => Game
   'library:detectExecutables': (dir: string) => string[]
@@ -87,11 +92,25 @@ export interface IpcInvokeMap {
   'profiles:setActive': (gameId: string, profileId: string) => void
   'profiles:save': (profile: Profile) => Profile
 
+  /** Plain deployment of the enabled mods (no loader installs). */
   'deploy:run': (gameId: string) => DeployReport
+  /** One-click: install the mod loader the enabled mods need, deploy, verify. */
+  'deploy:setup': (gameId: string) => DeployReport
+  'deploy:cancel': (gameId: string) => void
   'deploy:purge': (gameId: string) => DeployReport
   'deploy:status': (gameId: string) => DeployStatus
   'deploy:probe': (gameId: string) => LinkCapabilities
   'conflicts:get': (gameId: string) => ConflictReport
+
+  /** What NexusForge knows about modding the game: distribution, loaders, targets, launch options. */
+  'integration:inspect': (gameId: string, fresh?: boolean) => IntegrationInfo
+  'integration:installLoader': (gameId: string, loaderId: string) => DeployReport | undefined
+  'integration:removeLoader': (gameId: string, loaderId: string) => IntegrationInfo
+  /** The running (or last) setup operation of a game. */
+  'integration:operation': (gameId: string) => SetupProgress | undefined
+  'integration:lastLaunch': (gameId: string) => LaunchCheck | undefined
+  'integration:shortcut': (gameId: string, variant: 'vanilla' | 'modded', where: 'startmenu' | 'desktop') => ShortcutInfo
+  'integration:shortcuts': (gameId: string) => ShortcutInfo[]
 
   'sources:list': () => SourceInfo[]
   'sources:search': (sourceId: string, query: string, gameId?: string) => ModSearchResult[]
@@ -143,6 +162,10 @@ export interface IpcEventMap {
   'library:running': string[]
   'scan:progress': ScanProgress
   'deploy:progress': DeployProgress
+  /** Steps of a setup operation (loader install, deploy, verify). */
+  'setup:progress': SetupProgress
+  /** The mod loader's log after the game was started. */
+  'integration:launch': { gameId: string; check: LaunchCheck }
   'mods:changed': { gameId: string }
   /** A game's installed-mod scan finished. */
   'mods:detected': GameModInfo
@@ -168,7 +191,8 @@ export const INVOKE_CHANNELS = [
   'mods:list', 'mods:installFiles', 'mods:remove', 'mods:update', 'mods:files', 'mods:rootCandidates', 'mods:openFolder',
   'mods:detected', 'mods:detectedAll', 'mods:rescanInstalled', 'mods:checkUpdates',
   'profiles:list', 'profiles:create', 'profiles:rename', 'profiles:delete', 'profiles:setActive', 'profiles:save',
-  'deploy:run', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
+  'deploy:run', 'deploy:setup', 'deploy:cancel', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
+  'integration:inspect', 'integration:installLoader', 'integration:removeLoader', 'integration:operation', 'integration:lastLaunch', 'integration:shortcut', 'integration:shortcuts',
   'sources:list', 'sources:search', 'sources:query', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
   'sources:setFeeds', 'sources:plugins', 'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
   'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:remove', 'downloads:clear',
@@ -177,7 +201,7 @@ export const INVOKE_CHANNELS = [
 ] as const satisfies readonly InvokeChannel[]
 
 export const EVENT_CHANNELS = [
-  'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'mods:changed', 'mods:detected', 'downloads:update', 'sitepanel:state',
+  'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'setup:progress', 'integration:launch', 'mods:changed', 'mods:detected', 'downloads:update', 'sitepanel:state',
   'accounts:changed', 'accounts:steamStatus', 'toast', 'settings:changed'
 ] as const satisfies readonly EventChannel[]
 

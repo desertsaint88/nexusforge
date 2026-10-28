@@ -16,7 +16,8 @@ interface LibraryState {
   detected: Record<string, GameModInfo>
   load(): Promise<void>
   scan(): Promise<ScanResult | undefined>
-  launch(id: string): Promise<void>
+  /** variant: 'modded' through the game's mod loader (tModLoader), 'vanilla' without mods; default = the game's own start. */
+  launch(id: string, variant?: 'default' | 'vanilla' | 'modded'): Promise<void>
   update(id: string, patch: Parameters<IpcInvokeMap['library:update']>[1]): Promise<Game | undefined>
   refreshModCount(gameId: string): Promise<void>
 }
@@ -50,11 +51,11 @@ export const useLibrary = create<LibraryState>((set, get) => ({
       set({ scanning: false })
     }
   },
-  async launch(id) {
+  async launch(id, variant) {
     const game = get().games.find((g) => g.id === id)
     try {
-      await invoke('library:launch', id)
-      toast.success(`Launching ${game?.name ?? 'game'}`)
+      await invoke('library:launch', id, variant)
+      toast.success(`Launching ${game?.name ?? 'game'}${variant === 'modded' ? ' with mods' : variant === 'vanilla' ? ' without mods' : ''}`)
     } catch (err) {
       toast.error(`Couldn't launch ${game?.name ?? 'game'}`, (err as Error).message)
     }

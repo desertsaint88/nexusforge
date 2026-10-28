@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { motion } from 'framer-motion'
-import { ArrowUp, ArrowUpCircle, Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, RefreshCw, Rocket, Trash, Undo2, Zap } from 'lucide-react'
-import type { Game, InstalledMod } from '@shared/types'
+import { ArrowUp, ArrowUpCircle, Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, RefreshCw, Rocket, Square, Trash, Undo2, Zap } from 'lucide-react'
+import type { Game, InstalledMod, ModDeployState, ModKind } from '@shared/types'
 import { missingRequirements } from '@shared/deps'
-import { activeProfileOf, useMods } from '../../store/mods'
+import { activeProfileOf, STAGE_LABEL, useMods } from '../../store/mods'
 import { useLibrary } from '../../store/library'
 import { confirm, useNav } from '../../store/ui'
 import { invoke } from '../../lib/api'
@@ -14,6 +14,8 @@ import { MenuItem, MenuSeparator, Popover, Select } from '../../components/Popov
 import { EmptyState } from '../../components/Chrome'
 import { ModSettingsModal } from '../../modals/ModSettingsModal'
 import { DetectedMods } from './DetectedMods'
+import { SetupPanel } from './SetupPanel'
+import { DeployResult } from './DeployResult'
 
 const SOURCE_LABEL: Record<string, string> = {
   nexus: 'Nexus',
@@ -25,6 +27,36 @@ const SOURCE_LABEL: Record<string, string> = {
   moddb: 'ModDB',
   beamng: 'BeamNG',
   frameworks: 'Mod loader'
+}
+
+const KIND_LABEL: Partial<Record<ModKind, string>> = {
+  loader: 'mod loader',
+  plugin: 'plugin',
+  tmod: 'tModLoader mod',
+  world: 'world',
+  player: 'character',
+  resourcepack: 'resource pack',
+  savegame: 'save game'
+}
+
+/** Where a mod stands, as a badge: in storage only, in the game, checked, or why it is not deployed. */
+function StateBadge({ state, reason }: { state?: ModDeployState; reason?: string }) {
+  if (!state || state === 'disabled') return null
+  const map: Record<Exclude<ModDeployState, 'disabled'>, { label: string; tone: 'success' | 'info' | 'warning' | 'danger' | 'neutral'; title: string }> = {
+    verified: { label: 'verified', tone: 'success', title: 'In the game and checked after deployment.' },
+    deployed: { label: 'deployed', tone: 'info', title: 'In the game; NexusForge has no rules for this game to check that it loads.' },
+    prepared: { label: 'ready to deploy', tone: 'neutral', title: 'Downloaded and prepared in NexusForge storage; deploy to put it into the game.' },
+    failed: { label: 'deploy failed', tone: 'danger', title: 'The last deployment failed; see the result above.' },
+    rolled_back: { label: 'rolled back', tone: 'warning', title: 'The last deployment failed and was undone; see the result above.' },
+    needs_loader: { label: 'needs mod loader', tone: 'warning', title: reason ?? 'Its mod loader is not installed yet.' },
+    blocked: { label: "can't deploy", tone: 'danger', title: reason ?? 'This mod cannot be deployed.' }
+  }
+  const m = map[state]
+  return (
+    <Badge tone={m.tone} className="h-4.5 shrink-0 text-[10px]">
+      <span title={m.title}>{m.label}</span>
+    </Badge>
+  )
 }
 
 function ModThumb({ mod }: { mod: InstalledMod }) {
@@ -42,7 +74,9 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
   const state = useMods((s) => s.byGame[game.id])
   const deploying = useMods((s) => s.deploying[game.id])
   const installing = useMods((s) => s.installing[game.id] ?? 0)
-  const { toggle, reorder, install, remove, deploy, purge, switchProfile, setAll, checkUpdates, applyUpdates } = useMods()
+  const { toggle, reorder, install, remove, deploy, purge, switchProfile, setAll, checkUpdates, applyUpdates, cancel } = useMods()
+  const info = useMods((s) => s.integration[game.id])
+  const lastReport = useMods((s) => s.lastReport[game.id])
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<InstalledMod | undefined>()
 
@@ -90,6 +124,9 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
 
   const progress = typeof deploying === 'object' ? deploying : undefined
   const needsDeploy = status && !status.inSync
+  // A loader the enabled mods need and NexusForge can install: the button does both in one go.
+  const loaderToInstall = info?.loaders.find((l) => l.required && (l.state === 'missing' || l.state === 'broken') && l.canInstall)
+  const mainTarget = info?.targets.find((t) => t.id === 'game')?.dir ?? game.modding.targetDir
 
   if (!state?.loaded) {
     return (
@@ -103,6 +140,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
 
   return (
     <div>
+      <SetupPanel game={game} />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Select
           value={state.activeId}
@@ -129,14 +167,20 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
         <Button icon={<PackagePlus className="size-4" />} onClick={addFiles} loading={installing > 0}>
           {installing > 0 ? `Installing ${installing}…` : 'Install from file'}
         </Button>
+        {deploying ? (
+          <Button variant="ghost" icon={<Square className="size-3.5" />} onClick={() => void cancel(game.id)} title="Stops the deployment and puts the previous state back">
+            Cancel
+          </Button>
+        ) : null}
         <Button
           variant="primary"
           icon={<Rocket className="size-4" />}
           onClick={() => void deploy(game.id)}
           loading={Boolean(deploying)}
-          className={cn(needsDeploy && !deploying && 'ring-1 ring-[color-mix(in_oklab,var(--nf-accent)_55%,transparent)] ring-offset-2 ring-offset-ink-950')}
+          title={loaderToInstall ? `Installs ${loaderToInstall.name} first (${loaderToInstall.via === 'steam' ? 'through Steam' : 'official release'}), then deploys and checks every mod.` : 'Puts the enabled mods into the game and checks them.'}
+          className={cn((needsDeploy || loaderToInstall) && !deploying && 'ring-1 ring-[color-mix(in_oklab,var(--nf-accent)_55%,transparent)] ring-offset-2 ring-offset-ink-950')}
         >
-          {deploying ? 'Deploying…' : needsDeploy ? 'Deploy changes' : 'Deploy'}
+          {deploying ? 'Deploying…' : loaderToInstall ? `Set up ${loaderToInstall.name} & deploy` : needsDeploy ? 'Deploy changes' : 'Deploy'}
         </Button>
         <Popover
           align="end"
@@ -164,7 +208,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
               <MenuItem icon={<FolderOpen />} onClick={() => (close(), void invoke('mods:openFolder', game.id))}>
                 Open mod storage
               </MenuItem>
-              <MenuItem icon={<FolderOpen />} onClick={() => (close(), void invoke('app:openPath', game.modding.targetDir))}>
+              <MenuItem icon={<FolderOpen />} onClick={() => (close(), void invoke('app:openPath', mainTarget))}>
                 Open deploy folder
               </MenuItem>
               <MenuSeparator />
@@ -194,7 +238,7 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
       {(progress || (deploying && !progress)) && (
         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="glass mb-4 rounded-2xl px-4 py-3">
           <div className="mb-2 flex justify-between text-[12.5px] text-ink-300">
-            <span className="font-medium text-ink-100 capitalize">{progress?.phase ?? 'Preparing'}…</span>
+            <span className="font-medium text-ink-100">{progress ? (progress.message ?? STAGE_LABEL[progress.phase] ?? progress.phase) : 'Preparing…'}</span>
             {progress && progress.total > 0 && (
               <span className="tabular-nums">
                 {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
@@ -203,6 +247,20 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
           </div>
           <ProgressBar value={progress && progress.total ? progress.done / progress.total : undefined} indeterminate={!progress || !progress.total} />
         </motion.div>
+      )}
+
+      {!deploying && (
+        <DeployResult
+          report={lastReport}
+          last={status?.last}
+          onDismiss={() => useMods.setState({ lastReport: { ...useMods.getState().lastReport, [game.id]: undefined } })}
+        />
+      )}
+
+      {status?.interrupted && !deploying && (
+        <div className="mb-4 rounded-2xl border border-amber-400/20 bg-amber-500/[0.06] px-4 py-3 text-[12.5px] text-amber-100/90">
+          A deployment was cut off (NexusForge closed or the PC turned off). The next deploy first puts the state from before it back, then deploys.
+        </div>
       )}
 
       {status?.deployed && (
@@ -223,8 +281,8 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
           message={
             <>
               {outsideCount ? `${outsideCount} mod${outsideCount === 1 ? ' is' : 's are'} already installed in the game folder (listed below). ` : ''}
-              Drop mod archives anywhere on this window, install from a file, or browse online sources. Mods are kept in NexusForge's storage and linked into{' '}
-              <span className="font-mono text-ink-200">{game.modding.targetDir}</span> when you deploy.
+              Drop mod archives anywhere on this window, install from a file, or browse online sources. Mods are kept in NexusForge's storage and put where {game.name} loads them when you deploy
+              {info && info.targets.length > 1 ? ` (${info.targets.map((t) => t.label).join(', ')})` : <> (<span className="font-mono text-ink-200">{mainTarget}</span>)</>}.
             </>
           }
         >
@@ -303,6 +361,16 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                   })()}
                                 </div>
                                 <div className="mt-0.5 flex items-center gap-2 truncate text-[12px] text-ink-400">
+                                  {on && (
+                                    <StateBadge
+                                      state={status?.perMod[mod.id]}
+                                      reason={
+                                        (mod.checks ?? []).find((c) => c.level === 'error')?.message ??
+                                        (mod.needsLoader ? (info?.loaders.find((l) => l.id === mod.needsLoader)?.blocked ?? `Needs ${info?.loaders.find((l) => l.id === mod.needsLoader)?.name ?? mod.needsLoader}; Deploy installs it.`) : undefined)
+                                      }
+                                    />
+                                  )}
+                                  {mod.kind && KIND_LABEL[mod.kind] && <Badge className="h-4.5 text-[10px]">{KIND_LABEL[mod.kind]}</Badge>}
                                   {mod.source && <Badge className="h-4.5 text-[10px]">{SOURCE_LABEL[mod.source.sourceId] ?? mod.source.sourceId.replace(/^(feed|plugin):/, '')}</Badge>}
                                   {mod.author && <span className="truncate">by {mod.author}</span>}
                                   <span>{mod.fileCount.toLocaleString()} files</span>
@@ -317,6 +385,12 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                     )
                                   })()}
                                 </div>
+                                {(() => {
+                                  // The finding that matters most, in words (why it can't deploy, or a compatibility warning).
+                                  const c = (mod.checks ?? []).find((x) => x.level === 'error') ?? (mod.checks ?? []).find((x) => x.level === 'warning')
+                                  if (!c || !on) return null
+                                  return <div className={cn('mt-0.5 line-clamp-2 text-[11.5px] leading-snug', c.level === 'error' ? 'text-rose-200/85' : 'text-amber-200/80')}>{c.message}</div>
+                                })()}
                               </div>
                             </button>
                             <div>

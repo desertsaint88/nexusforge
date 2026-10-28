@@ -43,7 +43,9 @@ const PRESETS: PresetEntry[] = [
   { steam: ['243470'], names: ['watch dogs', 'watch_dogs'], target: '', sources: { nexus: 'watchdogs' } },
   { steam: ['447040'], names: ['watch dogs 2', 'watch_dogs 2'], target: '', sources: { nexus: 'watchdogs2' } },
   { steam: ['1426210'], names: ['it takes two'], target: '' },
-  { steam: ['105600'], names: ['terraria'], target: '', sources: { nexus: 'terraria' } },
+  // tModLoader mods are on the tModLoader app's Workshop (1281930), not Terraria's own (105600).
+  { steam: ['105600'], names: ['terraria'], target: '', sources: { nexus: 'terraria', steamworkshop: '1281930' } },
+  { steam: ['4576490', '4576510'], names: ['casualties unknown', 'casualties unknown demo', 'scav prototype'], target: '', sources: { nexus: 'scavprototype' } },
   { steam: ['548430'], names: ['deep rock galactic'], target: 'FSD/Mods', keepWrapper: true, sources: { thunderstore: 'deep-rock-galactic' } },
   // BeamNG reads mod zips from its user folder (%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods unless startup.ini moves it).
   { steam: ['284160'], names: ['beamng drive', 'beamng.drive', 'beamng'], target: '%BEAMNG_USER%/current/mods', keepArchive: true, sources: { beamng: 'beamng', nexus: 'beamngdrive', moddb: 'beamngdrive' } },

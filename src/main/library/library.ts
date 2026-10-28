@@ -1,7 +1,7 @@
 import { BrowserWindow, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { basename, dirname, join } from 'node:path'
-import type { DetectedGame, Game, ManualGameInput, Platform, ScanProgress, ScanResult } from '@shared/types'
+import type { DetectedGame, Game, LaunchSpec, ManualGameInput, Platform, ScanProgress, ScanResult } from '@shared/types'
 import { db, getSettings } from '../store'
 import { emit } from '../events'
 import { exists, isDir, safeReaddir, shortId } from '../util/fs'
@@ -441,7 +441,7 @@ export async function detectExecutables(dir: string): Promise<string[]> {
 // ---------------------------------------------------------------------------
 // Launching + playtime tracking for games we start directly.
 
-const running = new Map<string, { pid?: number; startedAt: number }>()
+const running = new Map<string, { pid?: number; startedAt: number; onEnd?: (startedAt: number) => void }>()
 
 export function runningGames(): string[] {
   return [...running.keys()]
@@ -457,6 +457,7 @@ function endSession(id: string, endedAt: number | undefined, countPlaytime: bool
   const info = running.get(id)
   running.delete(id)
   emit('library:running', runningGames())
+  if (info?.onEnd) setTimeout(() => info.onEnd!(info.startedAt), 1500)
   const current = getGame(id)
   if (!info || !current) return
   if (countPlaytime && endedAt) current.playtimeMinutes += Math.max(0, Math.round((endedAt - info.startedAt) / 60000))
@@ -466,10 +467,10 @@ function endSession(id: string, endedAt: number | undefined, countPlaytime: bool
 }
 
 /** Follows the game in its folder after a launcher (or Steam/Xbox) started it. */
-function followSession(id: string, game: Game, countPlaytime: boolean, appearWithinMs: number): boolean {
-  if (!trackableDir(game.installDir)) return false
+function followSession(id: string, game: Game, countPlaytime: boolean, appearWithinMs: number, dir = game.installDir): boolean {
+  if (!trackableDir(dir)) return false
   const session = running.get(id)
-  followGameFolder(game.installDir, {
+  followGameFolder(dir, {
     appearWithinMs,
     stillWanted: () => running.get(id) === session,
     done: (lastSeen) => {
@@ -480,25 +481,36 @@ function followSession(id: string, game: Game, countPlaytime: boolean, appearWit
   return true
 }
 
-export async function launchGame(id: string): Promise<void> {
+export interface LaunchOverride {
+  /** How to start this variant (tModLoader, BepInEx switched off). */
+  spec: LaunchSpec
+  /** Folder the started program runs from, for play-time tracking. */
+  followDir?: string
+  label?: string
+}
+
+export async function launchGame(id: string, override?: LaunchOverride, onEnd?: (startedAt: number) => void): Promise<void> {
   const game = requireGame(id)
   if (running.has(id)) throw new Error(`${game.name} is already running.`)
   const settings = getSettings()
-  const extraArgs = splitArgs(game.launchArgs)
-  log.info(`launching ${game.name} (${game.launch.kind})`)
+  const launch = override?.spec ?? game.launch
+  const followDir = override?.followDir ?? game.installDir
+  // The user's launch arguments belong to the game's own start, not to a loader's.
+  const extraArgs = override ? [] : splitArgs(game.launchArgs)
+  log.info(`launching ${game.name}${override?.label ? ` (${override.label})` : ''} (${launch.kind}${launch.kind === 'exe' ? `: ${launch.exe} ${(launch.args ?? []).join(' ')}` : launch.kind === 'url' ? `: ${launch.url}` : ''})`)
 
-  if (game.launch.kind === 'url' || game.launch.kind === 'appx') {
-    if (game.launch.kind === 'url') await shell.openExternal(game.launch.url)
-    else spawn('explorer.exe', [`shell:AppsFolder\\${game.launch.aumid}`], { detached: true, stdio: 'ignore' }).unref()
+  if (launch.kind === 'url' || launch.kind === 'appx') {
+    if (launch.kind === 'url') await shell.openExternal(launch.url)
+    else spawn('explorer.exe', [`shell:AppsFolder\\${launch.aumid}`], { detached: true, stdio: 'ignore' }).unref()
     // The game gets 90 s to appear (Steam may check for updates first). Steam keeps its own play time.
-    running.set(id, { startedAt: Date.now() })
+    running.set(id, { startedAt: Date.now(), onEnd })
     emit('library:running', runningGames())
-    if (!followSession(id, game, game.platform !== 'steam', 90_000)) endSession(id, undefined, false)
+    if (!followSession(id, game, game.platform !== 'steam', 90_000, followDir)) endSession(id, undefined, false)
   } else {
-    const exe = game.launch.exe || game.exePath
+    const exe = launch.exe || game.exePath
     if (!exe || !(await exists(exe))) throw new Error('The game executable is missing. Set it in the game settings.')
-    const args = [...(game.launch.args ?? []), ...extraArgs]
-    const cwd = game.launch.cwd || dirname(exe)
+    const args = [...(launch.args ?? []), ...extraArgs]
+    const cwd = launch.cwd || dirname(exe)
     await new Promise<void>((resolve, reject) => {
       const child = spawn(exe, args, { cwd, detached: true, stdio: 'ignore', windowsHide: false })
       child.once('error', async (err: NodeJS.ErrnoException) => {
@@ -510,12 +522,12 @@ export async function launchGame(id: string): Promise<void> {
         reject(err)
       })
       child.once('spawn', () => {
-        running.set(id, { pid: child.pid, startedAt: Date.now() })
+        running.set(id, { pid: child.pid, startedAt: Date.now(), onEnd })
         emit('library:running', runningGames())
         child.once('exit', () => {
           const info = running.get(id)
           // Gone within 90 s: a launcher that started the real game. Keep following it in the game folder.
-          if (info && Date.now() - info.startedAt < 90_000 && followSession(id, game, true, 60_000)) return
+          if (info && Date.now() - info.startedAt < 90_000 && followSession(id, game, true, 60_000, followDir)) return
           endSession(id, Date.now(), true)
         })
         child.unref()

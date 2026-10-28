@@ -4,7 +4,8 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import type { DownloadItem, DownloadRequest } from '@shared/types'
-import { db } from '../store'
+import { db, getSettings } from '../store'
+import { setupAndDeploy } from '../integrations/orchestrator'
 import { paths } from '../paths'
 import { emit, toast } from '../events'
 import { scoped } from '../logger'
@@ -139,30 +140,46 @@ async function runUrl(item: DownloadItem, req: DownloadRequest, url: string, hea
       await fsp.copyFile(src, file)
       update(item, { received: st.size })
     } else {
-      const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT, ...headers }, redirect: 'follow' })
+      let res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT, ...headers }, redirect: 'follow' })
       if (!res.ok || !res.body) throw new Error(`Server answered ${res.status} ${res.statusText}`)
       const fileName = fileNameHint ? safeName(fileNameHint) : fileNameFrom(res, url)
       file = join(paths.downloads(), `${item.id}-${fileName}`)
-      update(item, { fileName, total: Number(res.headers.get('content-length') ?? 0) })
+      const total = Number(res.headers.get('content-length') ?? 0)
+      update(item, { fileName, total })
       let received = 0
       let lastEmit = 0
       let lastBytes = 0
       let lastTime = Date.now()
-      const meter = new Transform({
-        transform(chunk: Buffer, _enc, cb) {
-          received += chunk.length
-          const now = Date.now()
-          if (now - lastEmit > 200) {
-            const speed = ((received - lastBytes) / Math.max(1, now - lastTime)) * 1000
-            lastBytes = received
-            lastTime = now
-            lastEmit = now
-            update(item, { received, speed })
+      const meter = () =>
+        new Transform({
+          transform(chunk: Buffer, _enc, cb) {
+            received += chunk.length
+            const now = Date.now()
+            if (now - lastEmit > 200) {
+              const speed = ((received - lastBytes) / Math.max(1, now - lastTime)) * 1000
+              lastBytes = received
+              lastTime = now
+              lastEmit = now
+              update(item, { received, speed })
+            }
+            cb(null, chunk)
           }
-          cb(null, chunk)
+        })
+      // A dropped connection resumes where it stopped (HTTP Range), up to three times.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), meter(), createWriteStream(file, { flags: attempt ? 'a' : 'w' }), { signal: controller.signal })
+          break
+        } catch (err) {
+          if (controller.signal.aborted || attempt >= 3 || !received || (total && received >= total)) throw err
+          log.warn(`download of ${item.name} dropped at ${received} bytes (${(err as Error).message}); resuming`)
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
+          const again = await fetch(res.url || url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT, ...headers, Range: `bytes=${received}-` }, redirect: 'follow' })
+          if (again.status !== 206 || !again.body) throw err
+          res = again
         }
-      })
-      await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), meter, createWriteStream(file), { signal: controller.signal })
+      }
+      if (total && received !== total) throw new Error(`The download stopped early (${received} of ${total} bytes). Retry it.`)
       update(item, { received, total: item.total || received, speed: 0 })
     }
     await finished(item, req, file)
@@ -317,8 +334,17 @@ async function installDownloaded(item: DownloadItem, gameId: string, req?: Downl
     })
     update(item, { state: 'completed', installedModId: mod.id, finishedAt: Date.now() }, true)
     invalidateUpdates(gameId, mod.id)
-    toast('success', `Installed ${mod.name}`, 'Deploy to apply it to the game.')
-    notifyInBackground(`Installed ${mod.name}`, `${getGame(gameId)?.name ?? 'Game'}: deploy in NexusForge to apply it.`)
+    const blocker = (mod.checks ?? []).find((c) => c.level === 'error')
+    if (blocker) {
+      toast('warning', `Installed ${mod.name}, but it can't be deployed`, blocker.message)
+    } else if (getSettings().autoDeploy) {
+      // One click: whatever the game needs for this mod (its loader) is set up, then everything is deployed and checked.
+      toast('info', `Installed ${mod.name}`, 'Setting up and deploying…')
+      void setupAndDeploy(gameId).catch((err) => toast('error', `Setting up ${getGame(gameId)?.name ?? 'the game'} failed`, (err as Error).message))
+    } else {
+      toast('success', `Installed ${mod.name}`, 'Deploy to apply it to the game.')
+      notifyInBackground(`Installed ${mod.name}`, `${getGame(gameId)?.name ?? 'Game'}: deploy in NexusForge to apply it.`)
+    }
   } catch (err) {
     update(item, { state: 'failed', error: `Install failed: ${(err as Error).message}`, finishedAt: Date.now() }, true)
     toast('error', `Couldn't install ${item.name}`, (err as Error).message)

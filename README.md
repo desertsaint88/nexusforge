@@ -11,7 +11,7 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
 - Manual add by `.exe` or folder, with exe detection that skips uninstallers, crash handlers and redistributables.
 - Library grid with cover art, playtime, mod count, mod-support badges, favorites, filters (incl. "Mod support" and "Modded"), sort, and a Continue Playing banner. Playtime is tracked for games NexusForge starts, also when a launcher (PlayGTAV.exe, a .bat, steam://) exits right away: the game's own process is followed in its folder (`library/tracker.ts`).
 - **Quick search**: Ctrl + K (or the box in the title bar) jumps to any game or page; Ctrl + Enter starts the selected game.
-- **Interface size** (Settings � General, Ctrl + / Ctrl - / Ctrl 0, Ctrl + mouse wheel) for small windows and TVs.
+- **Interface size** (Settings › General, Ctrl + / Ctrl - / Ctrl 0, Ctrl + mouse wheel) for small windows and TVs.
 - **Artwork**: Steam's local cache first, then the Steam store's *current* pictures from `IStoreBrowseService/GetItems` (newer games keep them under hashed paths; the old plain CDN paths 404), each checked to load before it's used. Games outside Steam are matched by folder name, the exe's product name and Unity's `app.info`, with abbreviations ("FNAF", "GTA", "HLL") and demo/edition suffixes handled; an exact match also fixes the title's spelling ("Hell Let Loose: Vietnam"). Pictures shipped in the game folder (`cover.jpg`, `banner.png`) are the fallback. Every game is re-checked once whenever the lookup improves (`ART_REV`).
 - **Startup scan**: every launch looks for new games, then reads every game's folders for installed mods (can be turned off in Settings › Library).
 - **Installed-mod detection** (`mods/detect-core.ts`): BepInEx (Thunderstore `manifest.json`, DLL version info), MelonLoader, UE4SS (`mods.txt`), Unreal `.pak` mods (`~mods`, `LogicMods`, `_P.pak`), Garry's Mod addons (`addon.json`, GMA headers), BeamNG (`db.json` with repository ids), Steam Workshop subscriptions (`appworkshop_<id>.acf` + titles), mod.io, Bethesda plugins (`plugins.txt`), BO3 mods/maps (`workshop.json`), X-Plane add-ons, People Playground contraptions, script hooks/ASI/ReShade and plain `Mods` folders. Files NexusForge deployed are recognized from its manifests. Whether a game can be modded comes from presets, loaders, the engine (Unity, Unreal, Source, BeamNG, Bethesda) and anti-cheat (EasyAntiCheat/BattlEye lower the verdict).
@@ -23,6 +23,15 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
 - Drag-and-drop load order (`@hello-pangea/dnd`); later mods win. Profiles per game, each saved as its own JSON file.
 - **Conflict resolver**: groups of mods that overwrite the same files, a winner picker per file, and "prefer this mod for the whole group". Pinned choices survive reordering.
 
+**Game integrations & one-click mod loaders** (`src/main/integrations/`)
+- Every game gets an integration (`registry.ts`, most specific first): Terraria/tModLoader, Casualties: Unknown, Valheim / Lethal Company / Risk of Rain 2 (BepInEx), GTA V, Cyberpunk 2077, then **any Unity game** and **any Unreal Engine game**, then a generic one. An integration says where mods go, which loader they need, how to install it through its official channel, what to check after deploying and how to read the loader's log after a start.
+- The setup panel (Mods tab) has an Install / Update / Repair button per loader; "Set up and deploy" also installs whatever the enabled mods need, the loaders they build on first. Loaders come from their official release channels with the SHA-256 the publisher states (GitHub release digests) and are deployed like mods, so a purge takes them out again:
+  - Unity: BepInEx 5 (Mono builds) / BepInEx 6 (IL2CPP), MelonLoader. Which one a mod needs is read from its DLL (it references `BepInEx` or `MelonLoader`).
+  - Unreal: `.pak`/`.utoc`/`.ucas` mods into `Content/Paks/~mods`, Blueprint mods into `LogicMods`, UE4SS (3.0.1 for UE4–5.3, `experimental-latest` for newer or unknown engine versions) with Lua/C++ mods switched on through `enabled.txt`.
+  - GTA V: Script Hook V from dev-c.com (only when it supports the installed GTA5.exe patch; the download sends dev-c.com's page as Referer, as a click there does), Script Hook V .NET. `.asi` next to GTA5.exe, .NET scripts into `scripts\`. OpenIV packages are refused with the reason.
+  - Cyberpunk 2077: Cyber Engine Tweaks, RED4ext, redscript, ArchiveXL, TweakXL, Codeware; a mod's files say which it needs.
+  - Terraria: tModLoader through Steam, or its GitHub `tModLoader.zip` for other copies when tModLoader's own start check (`InstallVerifier.cs`: an unmodified `Terraria.exe` of the version a release is made for, no `steam_api.dll`) accepts the copy; NexusForge picks the newest release that does, and never patches that check.
+- Works the same for store copies and plain game folders on any drive. **Proxy DLLs** (`proxy.ts`): loaders start through `winhttp.dll` / `version.dll` / `winmm.dll` / `dwmapi.dll` / `dinput8.dll` next to the game. Copies of games often use those names for their own files (Steam or Social Club emulators, OnlineFix's `winmm.dll`); NexusForge reads what each DLL is and never replaces one that is not the loader's: the loader goes in under another name it supports, or the panel says which files are in the way. Anti-cheat (EasyAntiCheat, BattlEye) is shown as a warning; NexusForge does nothing to get past it.
 **Mod sources**
 - Adapter interface (`ModSourceAdapter`) with Nexus Mods, Steam Workshop (SteamCMD), Thunderstore, mod.io, CurseForge, ModDB, Modrinth, the BeamNG repository and mod loaders (BepInEx, MelonLoader from GitHub) built in. Requirements are resolved recursively and installed first.
 - **Sorting**: Best match, Top rated, Most downloaded (all time and recent), Trending and Recently added/updated. Each source sorts on its side where it can (Nexus GraphQL with date windows for trending/recent, mod.io `_sort`, CurseForge `sortField`, Workshop `browsesort` + `days`, Thunderstore/Modrinth orderings, BeamNG and ModDB list orders); otherwise NexusForge sorts the results and says so. Mods already installed in the game are marked in the list and the details, with an "Installed" filter.
@@ -52,6 +61,7 @@ npm run smoke        # end-to-end run of the built app with screenshots in .smok
 node scripts/smoke-sources.mjs   # live checks against the real mod sites (.smoke/sources/shots)
 node scripts/smoke-1.2.mjs       # artwork, installed-mod detection, sorting, look (this PC's library, read-only)
 node scripts/smoke-cloudflare.mjs  # Nexus login/registration pass Cloudflare inside the app (no automation driver)
+npx vitest run --config scripts/live/vitest.live.config.ts   # live checks: real loader downloads, real starts of a copied game, this PC's library (read-only)
 npm run dist         # NSIS installer + portable exe in release/
 ```
 
@@ -65,6 +75,7 @@ Set `NEXUSFORGE_SMOKE_FOLDERS="C:\Games;E:\Games"` to also scan those folders (r
 src/main        Electron main process
   library/      scanners (steam, epic, xbox, gog, custom), artwork, presets, launching
   mods/         archive install, layout detection, plan/conflicts, deploy engine, profiles
+  integrations/ per-game and per-engine integrations, mod loaders (zip-loader.ts), proxy DLL checks, one-click setup
   sources/      adapter interface, Nexus/Thunderstore/Modrinth, feeds, plugin loader
   downloads/    download manager
 src/preload     context bridge (allow-listed channels)

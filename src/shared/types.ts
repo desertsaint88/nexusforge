@@ -2,8 +2,12 @@
 
 export type Platform = 'steam' | 'epic' | 'xbox' | 'gog' | 'custom' | 'manual'
 
-export type DeployStrategy = 'symlink' | 'hardlink' | 'copy'
-export type DeployMethod = DeployStrategy
+/**
+ * How files get into the game. 'auto' hardlinks when mod storage and the target are on the same drive and copies
+ * otherwise; it needs no special Windows rights. 'symlink' is only used when chosen and Windows allows it.
+ */
+export type DeployStrategy = 'auto' | 'symlink' | 'hardlink' | 'copy'
+export type DeployMethod = 'symlink' | 'hardlink' | 'copy'
 
 export type LaunchSpec =
   | { kind: 'url'; url: string }
@@ -130,6 +134,50 @@ export interface InstalledMod {
   originalFile?: string
   /** Mods this one needs (source refs), used for load order and missing-dependency warnings. */
   requires?: ModSourceRef[]
+  /**
+   * Where the mod's files go (set by the game's integration). Mods installed before 1.4 have none:
+   * everything under rootPath goes into the game's deploy folder.
+   */
+  routes?: ModRoute[]
+  /** What the package contains, as the game's integration understood it. */
+  kind?: ModKind
+  /** The mod is this mod loader (BepInEx): deployed first, managed from the setup panel. */
+  loaderId?: string
+  /** Mod loader the mod needs to work ('bepinex', 'tmodloader'). */
+  needsLoader?: string
+  /** More loaders it needs besides needsLoader ('red4ext', 'archivexl'). */
+  needsLoaders?: string[]
+  /** Files left out of the game (read-me files, a second copy of the loader) and why. */
+  skipped?: SkippedFile[]
+  /** Compatibility findings; an 'error' keeps the mod from being deployed. */
+  checks?: ModCheck[]
+  /** Facts read from the package itself (tModLoader mod name, version it was built for). */
+  meta?: Record<string, string>
+  /** Integration (and rules revision) that laid the mod out, e.g. "terraria@1". */
+  layoutBy?: string
+}
+
+/** A folder (or single file) of a mod's storage that goes into one deploy target. */
+export interface ModRoute {
+  /** Path inside stagingDir, forward slashes ('' = the whole storage folder). */
+  from: string
+  /** Deploy target id ('game' = the game's deploy folder). */
+  target: string
+  /** Path inside the target: a folder for folder routes, the file name for file routes ('' = target root). */
+  to: string
+}
+
+export type ModKind = 'loader' | 'plugin' | 'tmod' | 'world' | 'player' | 'resourcepack' | 'savegame' | 'archive' | 'files'
+
+export interface SkippedFile {
+  path: string
+  reason: string
+}
+
+export interface ModCheck {
+  level: 'error' | 'warning' | 'info'
+  message: string
+  code?: string
 }
 
 export interface Profile {
@@ -204,7 +252,10 @@ export interface GameModInfo {
 }
 
 export interface ConflictFile {
+  /** "<target>|<lower-case path>" */
   key: string
+  /** Deploy target the file goes into. */
+  target: string
   rel: string
   /** Providers in load-order (lowest priority first). */
   providers: string[]
@@ -227,7 +278,20 @@ export interface ConflictReport {
   perMod: Record<string, { wins: number; loses: number }>
 }
 
+/** A folder mods are deployed into: the game folder, a mods folder in Documents, a save folder, … */
+export interface DeployTarget {
+  id: string
+  label: string
+  dir: string
+  /** The game writes to these files (worlds, saves): always copied, and changed files are never removed. */
+  userData?: boolean
+  /** Missing folder may be created (folders in Documents that the game creates on first start). */
+  create?: boolean
+}
+
 export interface DeployManifestEntry {
+  /** Deploy target id; manifests from before 1.4 only had the game folder ('game'). */
+  target: string
   rel: string
   modId: string
   source: string
@@ -243,16 +307,23 @@ export interface DeployManifestEntry {
 }
 
 export interface DeployManifest {
-  version: 1
+  version: 2
   gameId: string
   profileId: string
-  targetDir: string
+  /** target id -> absolute folder */
+  targets: Record<string, string>
   strategy: DeployStrategy
   deployedAt: number
   planHash: string
   entries: DeployManifestEntry[]
+  /** Folders NexusForge created, as "<target>|<path>". */
   createdDirs: string[]
+  /** Result of the checks after this deployment. */
+  verified?: { at: number; ok: boolean; problems: string[]; /** The integration checked that the game will load the files (not just that they are in place). */ loadVerified?: boolean }
 }
+
+/** Where a mod stands: in storage, in the game, checked, or what went wrong. */
+export type ModDeployState = 'prepared' | 'deployed' | 'verified' | 'failed' | 'rolled_back' | 'needs_loader' | 'blocked' | 'disabled'
 
 export interface DeployStatus {
   gameId: string
@@ -262,26 +333,89 @@ export interface DeployStatus {
   methods: Record<DeployMethod, number>
   deployedAt?: number
   profileId?: string
+  /** Every folder this game deploys into. */
+  targets: DeployTarget[]
+  /** Outcome of the last deployment (kept across restarts). */
+  last?: DeployOutcomeSummary
+  /** Per installed mod. */
+  perMod: Record<string, ModDeployState>
+  /** A deployment was cut off (crash, power loss); the next deploy restores the state before it first. */
+  interrupted?: boolean
 }
+
+export type DeployOutcome = 'verified' | 'failed' | 'rolled_back' | 'nothing'
+
+export interface DeployOutcomeSummary {
+  at: number
+  outcome: DeployOutcome
+  title: string
+  problem?: DeployProblem
+  /** Mods involved in the failure (if known). */
+  failedMods?: string[]
+}
+
+export type DeployStage = 'validate' | 'loader' | 'plan' | 'preflight' | 'recover' | 'remove' | 'place' | 'configure' | 'verify' | 'record' | 'rollback' | 'done'
 
 export interface DeployProgress {
   gameId: string
-  phase: 'planning' | 'removing' | 'linking' | 'finishing'
+  phase: DeployStage
   done: number
   total: number
+  message?: string
+}
+
+export interface DeployProblem {
+  /** locked | not_writable | disk_full | source_missing | target_missing | verify_failed | check_failed | cancelled | unsafe_path | game_running | loader_missing | blocked | error */
+  code: string
+  title: string
+  detail: string
+  /** What the user can do about it. */
+  advice: string[]
+  /** File(s) involved. */
+  paths?: string[]
+}
+
+export interface VerifyCheck {
+  label: string
+  ok: boolean
+  level: 'error' | 'warning' | 'info'
+  detail?: string
+}
+
+export interface DeployVerification {
+  ok: boolean
+  /** Files checked after deployment. */
+  checked: number
+  failed: Array<{ target: string; rel: string; reason: string }>
+  /** Checks of the game integration (loader present, enabled list, launch target). */
+  checks: VerifyCheck[]
+  /** NexusForge knows how this game loads mods and checked it; false for plain file deployments. */
+  loadVerified: boolean
 }
 
 export interface DeployReport {
   gameId: string
+  outcome: DeployOutcome
+  /** One-line summary for the user. */
+  title: string
   placed: number
   removed: number
   unchanged: number
   backedUp: number
   /** Files the game/user modified after deployment; moved to the overwrite folder instead of being deleted. */
   rescued: number
+  /** Changed files in save folders that were left where they are (your progress). */
+  kept: number
   methods: Record<DeployMethod, number>
-  fallbacks: string[]
+  /** How the method was chosen (no action needed), e.g. "copied: mod storage is on another drive". */
+  notes: string[]
   errors: string[]
+  problem?: DeployProblem
+  verification?: DeployVerification
+  /** An interrupted earlier deployment was rolled back first. */
+  recovered?: boolean
+  /** Stages in the order they ran. */
+  stages: Array<{ stage: DeployStage; ok: boolean; ms: number; message?: string }>
   durationMs: number
 }
 
@@ -290,6 +424,111 @@ export interface LinkCapabilities {
   hardlink: boolean
   symlinkReason?: string
   hardlinkReason?: string
+  /** What 'auto' will do for this game, in words. */
+  autoMethod?: string
+}
+
+// ---------------------------------------------------------------------------
+// Game integrations (how a game loads mods, its mod loaders and launch options)
+
+export type DistributionKind = 'steam' | 'gog' | 'epic' | 'xbox' | 'standalone' | 'unknown'
+
+export interface LoaderStatus {
+  id: string
+  name: string
+  state: 'installed' | 'missing' | 'outdated' | 'broken' | 'unsupported'
+  version?: string
+  latest?: string
+  dir?: string
+  /** How it is (or would be) installed. */
+  via?: 'steam' | 'github' | 'nexusforge' | 'manual'
+  detail?: string
+  canInstall: boolean
+  canUpdate: boolean
+  canRemove: boolean
+  /** Why NexusForge can't install it here, and what to do instead. */
+  blocked?: string
+  /** Something to know before installing it (anti-cheat, game version). */
+  warning?: string
+  /** What the loader is for. */
+  summary?: string
+  /** Other loaders it needs (installed first). */
+  requires?: string[]
+  /** The DLL name it loads through, when that is not its usual one (a file that came with the game has it). */
+  proxy?: string
+  /** An installed mod needs it. */
+  required: boolean
+}
+
+export interface LaunchOption {
+  id: 'default' | 'vanilla' | 'modded'
+  label: string
+  description?: string
+  available: boolean
+  reason?: string
+  primary?: boolean
+}
+
+export interface IntegrationInfo {
+  gameId: string
+  integrationId: string
+  /** "Terraria · tModLoader", "Casualties: Unknown · BepInEx", "Generic" */
+  name: string
+  /** full: loader setup, routing and checks are implemented; partial: routing/checks; basic: files are copied as they are. */
+  support: 'full' | 'partial' | 'basic'
+  distribution: { kind: DistributionKind; label: string; detail?: string }
+  version?: string
+  /** The install folder has the files this game needs. */
+  valid: boolean
+  problems: string[]
+  targets: DeployTarget[]
+  loaders: LoaderStatus[]
+  launchOptions: LaunchOption[]
+  /** Starts NexusForge can make a shortcut for ("Terraria Modded"). */
+  shortcutVariants?: Array<'vanilla' | 'modded'>
+  /** What NexusForge does for this game. */
+  capabilities: string[]
+  warnings: string[]
+  /** What it can't do here, plainly. */
+  limitations: string[]
+  inspectedAt: number
+}
+
+export interface SetupStep {
+  id: string
+  label: string
+  state: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+  detail?: string
+  /** 0..1 when known */
+  progress?: number
+}
+
+export interface SetupProgress {
+  gameId: string
+  opId: string
+  title: string
+  steps: SetupStep[]
+  done: boolean
+  ok?: boolean
+  error?: string
+}
+
+export interface LaunchCheck {
+  /** The loader wrote its log after the last launch. */
+  ran: boolean
+  loader?: string
+  loaded: string[]
+  errors: string[]
+  logFile?: string
+  at?: number
+}
+
+export interface ShortcutInfo {
+  gameId: string
+  path: string
+  label: string
+  where: 'startmenu' | 'desktop'
+  variant: 'vanilla' | 'modded'
 }
 
 // ---------------------------------------------------------------------------
@@ -558,7 +797,7 @@ export type AccentName = 'violet' | 'ember' | 'cyan' | 'graphite' | 'emerald'
 export interface Settings {
   accent: AccentName
   reduceMotion: boolean
-  /** Interface size (zoom), 0.75�1.5; Ctrl + / Ctrl - / Ctrl 0 and Ctrl + mouse wheel change it. */
+  /** Interface size (zoom), 0.75–1.5; Ctrl + / Ctrl - / Ctrl 0 and Ctrl + mouse wheel change it. */
   uiScale: number
   minimizeOnLaunch: boolean
   autoFetchArtwork: boolean
@@ -570,6 +809,8 @@ export interface Settings {
   scanOnStartup: boolean
   modStorageDir: string
   defaultStrategy: DeployStrategy
+  /** After a download installs, set up what the game needs (mod loader) and deploy right away. */
+  autoDeploy: boolean
   /** What to do with mods a download needs: ask every time, install them automatically, or never. */
   dependencyMode: 'ask' | 'always' | 'never'
   /** steamcmd.exe used for Steam Workshop downloads; empty = NexusForge's own copy. */

@@ -1,20 +1,41 @@
 import { shell } from 'electron'
 import { promises as fsp } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
-import type { ConflictReport, DeployReport, DeployStatus, InstalledMod, LinkCapabilities, ModFileEntry, ModSourceRef } from '@shared/types'
+import { createHash } from 'node:crypto'
+import type {
+  ConflictReport,
+  DeployOutcomeSummary,
+  DeployProgress,
+  DeployReport,
+  DeployStatus,
+  Game,
+  InstalledMod,
+  IntegrationInfo,
+  LinkCapabilities,
+  ModDeployState,
+  ModFileEntry,
+  ModSourceRef
+} from '@shared/types'
 import { db } from '../store'
 import { paths } from '../paths'
 import { emit } from '../events'
 import { scoped } from '../logger'
-import { dirSize, exists, isDir, renameDir, safeName, safeReaddir, shortId, walkFiles } from '../util/fs'
-import { getGame } from '../library/library'
+import { exists, isDir, renameDir, safeName, safeReaddir, shortId, walkFiles } from '../util/fs'
+import { getGame, runningGames } from '../library/library'
 import { findPreset } from '../library/presets'
+import { gameProcessesIn, runningExecutables } from '../library/tracker'
 import { extractArchive, isArchive, zipFolder } from './archive'
-import { applyThunderstoreLayout, detectRoot, readThunderstoreManifest } from './layout'
-import { buildPlan, conflictReport, type DeployPlan, type PlanMod } from './plan'
-import { applyDeployment, EMPTY_PLAN, readManifest } from './deploy'
+import { buildPlan, conflictReport, type DeployPlan, type PlanFile, type PlanMod } from './plan'
+import { planFilesFor, routesOf } from './routes'
+import { applyDeployment, EMPTY_PLAN, hasInterruptedDeployment, readManifest } from './deploy'
 import { probeLinks } from './links'
 import { activeProfile, addModToProfiles, deleteAllProfiles, listProfiles, saveProfile } from './profiles'
+import { integrationFor } from '../integrations/registry'
+import { integrationEnv, integrationState, saveIntegrationState } from '../integrations/env'
+import { engineTargets, type GameIntegration, type LoaderInstallHost, type StagedPackage } from '../integrations/types'
+import { route, skipDocs } from '../integrations/common'
+import { looksLikeSave } from '../integrations/generic'
+import { loadersNeeded } from '../integrations/zip-loader'
 
 const log = scoped('mods')
 
@@ -44,24 +65,72 @@ function requireMod(gameId: string, modId: string): InstalledMod {
   return m
 }
 
-function requireGame(gameId: string) {
+function requireGame(gameId: string): Game {
   const g = getGame(gameId)
   if (!g) throw new Error('Game not found')
   return g
 }
 
 // ---------------------------------------------------------------------------
-// File index
+// The game's integration
 
-const fileCache = new Map<string, ModFileEntry[]>()
+export interface GameContext {
+  game: Game
+  integration: GameIntegration
+  info: IntegrationInfo
+}
 
-export async function modFiles(mod: InstalledMod): Promise<ModFileEntry[]> {
-  const key = `${mod.id}:${mod.updatedAt}:${mod.rootPath}`
+/** Loader installs through the mod pipeline (BepInEx goes into the game folder like a mod). */
+export const loaderHost: LoaderInstallHost = {
+  installModFile: (gameId, file, meta) => installMod(gameId, file, meta),
+  state: integrationState,
+  saveState: saveIntegrationState
+}
+
+const inspected = new Map<string, { at: number; ctx: Promise<GameContext> }>()
+
+/** What the game's integration says about it right now (cached for a few seconds). */
+export function inspectGame(gameId: string, fresh = false): Promise<GameContext> {
+  const hit = inspected.get(gameId)
+  if (!fresh && hit && Date.now() - hit.at < 4000) return hit.ctx
+  const ctx = (async () => {
+    const game = requireGame(gameId)
+    const env = integrationEnv()
+    const integration = await integrationFor(game, env)
+    const info = await integration.inspect(game, env, integrationState(gameId), listMods(gameId))
+    return { game, integration, info }
+  })()
+  inspected.set(gameId, { at: Date.now(), ctx })
+  ctx.catch(() => inspected.delete(gameId))
+  return ctx
+}
+
+export function forgetInspection(gameId: string): void {
+  inspected.delete(gameId)
+}
+
+export async function integrationInfo(gameId: string, fresh = false): Promise<IntegrationInfo> {
+  return (await inspectGame(gameId, fresh)).info
+}
+
+// ---------------------------------------------------------------------------
+// Files
+
+const fileCache = new Map<string, PlanFile[]>()
+
+/** Every file a mod puts into the game: deploy target, path there, and its file in storage. */
+export async function planFiles(mod: InstalledMod): Promise<PlanFile[]> {
+  const key = `${mod.id}:${mod.updatedAt}:${mod.stagingDir}:${JSON.stringify(routesOf(mod))}:${JSON.stringify(mod.skipped ?? [])}`
   const hit = fileCache.get(key)
   if (hit) return hit
-  const files = (await walkFiles(join(mod.stagingDir, ...mod.rootPath.split('/').filter(Boolean)))).map((f) => ({ rel: f.rel, size: f.size }))
-  fileCache.set(key, files)
-  return files
+  const out = await planFilesFor(mod)
+  fileCache.set(key, out)
+  return out
+}
+
+/** Files under the mod's content folder (the mod settings preview). */
+export async function modFiles(mod: InstalledMod): Promise<ModFileEntry[]> {
+  return (await planFiles(mod)).map((f) => ({ rel: f.target === 'game' ? f.rel : `${f.target}: ${f.rel}`, size: f.size }))
 }
 
 // ---------------------------------------------------------------------------
@@ -125,16 +194,20 @@ async function stagePackedMod(input: string, dest: string): Promise<void> {
   }
 }
 
+const layoutTag = (i: GameIntegration) => `${i.id}@${i.revision}`
+
 export async function installMod(gameId: string, input: string, meta: InstallMeta = {}): Promise<InstalledMod> {
   const game = requireGame(gameId)
   if (!(await exists(input))) throw new Error(`File not found: ${input}`)
+  const ctx = await inspectGame(gameId, true)
   const stagingRoot = paths.modStaging(gameId)
   const id = shortId('m')
   const tmp = join(stagingRoot, `.installing-${id}`)
   const packed = Boolean(findPreset(game)?.keepArchive)
-  log.info(`installing ${input} for ${game.name}${packed ? ' (kept packed)' : ''}`)
+  const inputIsDir = await isDir(input)
+  log.info(`installing ${input} for ${game.name}${packed ? ' (kept packed)' : ''} [${ctx.integration.id}]`)
   try {
-    if (await isDir(input)) {
+    if (inputIsDir) {
       await fsp.cp(input, tmp, { recursive: true, errorOnExist: false, force: true })
     } else if (packed && isArchive(input)) {
       await stagePackedMod(input, tmp)
@@ -145,30 +218,23 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
       await fsp.copyFile(input, join(tmp, originalName(input)))
     }
 
-    const ts = meta.source?.sourceId === 'thunderstore' ? meta.source.modId.replace('/', '-') : undefined
-    const tsManifest = packed ? undefined : await readThunderstoreManifest(tmp)
-    let rootPath: string
-    if (packed) {
-      rootPath = ''
-    } else if (ts || tsManifest) {
-      rootPath = await applyThunderstoreLayout(tmp, ts ?? tsManifest?.name ?? 'plugin')
-    } else {
-      rootPath = await detectRoot(tmp, basename(game.modding.targetDir), findPreset(game)?.keepWrapper)
-    }
+    const guessed = inputIsDir ? { name: basename(input) } : isArchive(input) ? nameFromArchive(originalName(input)) : { name: basename(originalName(input), extname(input)) }
+    const files = await walkFiles(tmp)
+    if (!files.length) throw new Error('The archive contains no files.')
+    const pkg: StagedPackage = { dir: tmp, files, name: meta.name ?? guessed.name, archiveName: inputIsDir ? undefined : originalName(input), source: meta.source }
+    const cls = await ctx.integration.classify(pkg, game, ctx.info, integrationEnv())
 
-    const guessed = (await isDir(input)) ? { name: basename(input) } : isArchive(input) ? nameFromArchive(originalName(input)) : { name: basename(originalName(input), extname(input)) }
-    const name = meta.name ?? tsManifest?.name?.replace(/_/g, ' ') ?? guessed.name
-    const version = meta.version ?? tsManifest?.version_number ?? guessed.version
-
+    const name = meta.name ?? cls.name ?? guessed.name
+    const version = meta.version ?? cls.version ?? guessed.version
     const finalDir = join(stagingRoot, `${safeName(name)}_${id.slice(2, 8)}`)
     await renameDir(tmp, finalDir)
-    const { bytes, files } = await dirSize(join(finalDir, ...rootPath.split('/').filter(Boolean)))
-    if (files === 0) throw new Error('The archive contains no files.')
 
     // Installing a mod that is already installed from the same source replaces it in place.
     const previous = meta.source
       ? listMods(gameId).find((m) => m.source?.sourceId === meta.source!.sourceId && m.source?.modId === meta.source!.modId)
-      : undefined
+      : cls.loaderId
+        ? listMods(gameId).find((m) => m.loaderId === cls.loaderId)
+        : undefined
 
     const mod: InstalledMod = {
       id: previous?.id ?? id,
@@ -176,25 +242,41 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
       name: previous?.name && !meta.name ? previous.name : name,
       version,
       author: meta.author ?? previous?.author,
-      summary: meta.summary ?? tsManifest?.description ?? previous?.summary,
+      summary: meta.summary ?? previous?.summary,
       thumbnail: meta.thumbnail ?? previous?.thumbnail,
       source: meta.source ?? previous?.source,
       stagingDir: finalDir,
-      rootPath,
+      rootPath: cls.rootPath,
       installedAt: previous?.installedAt ?? Date.now(),
       updatedAt: Date.now(),
-      sizeBytes: bytes,
-      fileCount: files,
-      originalFile: (await isDir(input)) ? undefined : basename(input),
-      requires: meta.requires?.length ? meta.requires : previous?.requires
+      sizeBytes: 0,
+      fileCount: 0,
+      originalFile: inputIsDir ? undefined : basename(input),
+      requires: meta.requires?.length ? meta.requires : previous?.requires,
+      routes: cls.routes,
+      kind: cls.kind,
+      loaderId: cls.loaderId,
+      needsLoader: cls.needsLoader,
+      needsLoaders: cls.needsLoaders,
+      skipped: cls.skipped,
+      checks: cls.checks,
+      meta: cls.meta,
+      layoutBy: layoutTag(ctx.integration)
     }
+    const deployable = await planFiles(mod)
+    mod.fileCount = deployable.length
+    mod.sizeBytes = deployable.reduce((a, f) => a + f.size, 0)
     saveMod(mod)
     if (previous) {
       log.info(`updated ${mod.name} ${previous.version ?? ''} -> ${version ?? ''}`)
-      await removeStaging(previous.stagingDir, gameId)
+      // The old files stay until a deployment without them succeeded, so a failed update can be rolled back.
+      retireStaging(gameId, previous.stagingDir)
     } else {
       await addModToProfiles(gameId, mod.id)
     }
+    if (cls.skipped.length) log.info(`${mod.name}: left out ${cls.skipped.map((s) => `${s.path} (${s.reason})`).join('; ')}`)
+    for (const c of cls.checks) log.info(`${mod.name}: ${c.level}: ${c.message}`)
+    forgetInspection(gameId)
     emit('mods:changed', { gameId })
     return mod
   } catch (err) {
@@ -202,6 +284,71 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
     log.error(`install failed for ${input}`, err)
     throw err
   }
+}
+
+/**
+ * Lays an installed mod out again when the game's integration has newer rules (mods installed before 1.4 went
+ * into the game folder as they were). A content folder the user picked by hand is kept.
+ */
+async function ensureLayout(mod: InstalledMod, ctx: GameContext): Promise<InstalledMod> {
+  const want = layoutTag(ctx.integration)
+  if (mod.layoutBy === want || mod.layoutBy === 'manual') return mod
+  if (!(await isDir(mod.stagingDir))) return mod
+  let next: InstalledMod
+  if (ctx.integration.id === 'generic' && !mod.layoutBy) {
+    // Same files as before, minus read-me files at the top of the content folder. A save game is no longer
+    // put into the game folder (before 1.4 it was, where no game reads it).
+    const files = await walkFiles(mod.stagingDir)
+    const pkg: StagedPackage = { dir: mod.stagingDir, files, name: mod.name, archiveName: mod.originalFile, source: mod.source }
+    const cls = looksLikeSave(pkg, files.map((f) => f.rel)) ? await ctx.integration.classify(pkg, ctx.game, ctx.info, integrationEnv()) : undefined
+    next = cls
+      ? { ...mod, routes: cls.routes, kind: cls.kind, skipped: cls.skipped, checks: cls.checks, layoutBy: want }
+      : { ...mod, routes: [route(mod.rootPath, 'game')], skipped: skipDocs(files, mod.rootPath), layoutBy: want }
+  } else {
+    const files = await walkFiles(mod.stagingDir)
+    const pkg: StagedPackage = { dir: mod.stagingDir, files, name: mod.name, archiveName: mod.originalFile, source: mod.source }
+    const cls = await ctx.integration.classify(pkg, ctx.game, ctx.info, integrationEnv())
+    next = {
+      ...mod,
+      routes: cls.routes,
+      rootPath: cls.rootPath,
+      kind: cls.kind,
+      loaderId: cls.loaderId,
+      needsLoader: cls.needsLoader,
+      needsLoaders: cls.needsLoaders,
+      skipped: cls.skipped,
+      checks: cls.checks,
+      meta: cls.meta ?? mod.meta,
+      layoutBy: want
+    }
+  }
+  const deployable = await planFiles(next)
+  next.fileCount = deployable.length
+  next.sizeBytes = deployable.reduce((a, f) => a + f.size, 0)
+  saveMod(next)
+  log.info(`re-laid out ${mod.name} with ${want}: ${(next.routes ?? []).map((r) => `${r.from || '.'} -> ${r.target}:${r.to || '.'}`).join(', ')}`)
+  return next
+}
+
+function retireStaging(gameId: string, dir: string): void {
+  const list = db().get('retiredStaging') ?? []
+  if (!list.some((r) => r.dir.toLowerCase() === dir.toLowerCase())) db().set('retiredStaging', [...list, { gameId, dir, at: Date.now() }])
+}
+
+/** Deletes replaced mod versions that no deployment uses any more. */
+async function cleanupRetired(gameId: string): Promise<void> {
+  const list = db().get('retiredStaging') ?? []
+  const manifest = await readManifest(paths.deployManifest(gameId))
+  const used = (dir: string) => manifest?.entries.some((e) => e.source.toLowerCase().startsWith(dir.toLowerCase() + '\\') || e.source.toLowerCase().startsWith(dir.toLowerCase() + '/'))
+  const keep: typeof list = []
+  for (const r of list) {
+    if (r.gameId !== gameId || used(r.dir)) {
+      keep.push(r)
+      continue
+    }
+    await removeStaging(r.dir, gameId).catch(() => keep.push(r))
+  }
+  db().set('retiredStaging', keep)
 }
 
 async function removeStaging(dir: string, gameId: string): Promise<void> {
@@ -220,9 +367,18 @@ export async function removeMod(gameId: string, modId: string): Promise<void> {
   const { profiles } = await listProfiles(gameId)
   for (const p of profiles) await saveProfile(p)
   const manifest = await readManifest(paths.deployManifest(gameId))
-  if (manifest?.entries.some((e) => e.modId === modId)) await deployGame(gameId)
+  if (manifest?.entries.some((e) => e.modId === modId)) {
+    const report = await deployGame(gameId)
+    if (report.outcome !== 'verified' && report.outcome !== 'nothing') {
+      // The game still has its files: keep the record so nothing is orphaned, and say why.
+      saveMod(mod)
+      for (const p of profiles) await saveProfile({ ...p, order: [...p.order, mod.id] })
+      throw new Error(`${mod.name} could not be taken out of the game: ${report.problem?.detail ?? report.title}`)
+    }
+  }
   await removeStaging(mod.stagingDir, gameId)
   log.info(`removed mod ${mod.name}`)
+  forgetInspection(gameId)
   emit('mods:changed', { gameId })
 }
 
@@ -234,10 +390,15 @@ export async function updateMod(gameId: string, modId: string, patch: Partial<Pi
     const root = patch.rootPath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
     if (root.split('/').includes('..')) throw new Error('Invalid folder')
     if (!(await isDir(join(mod.stagingDir, ...root.split('/').filter(Boolean))))) throw new Error('That folder does not exist in the mod.')
+    // A folder picked by hand maps onto the game's main deploy folder and is never re-laid out automatically.
     mod.rootPath = root
-    const { bytes, files } = await dirSize(join(mod.stagingDir, ...root.split('/').filter(Boolean)))
-    mod.sizeBytes = bytes
-    mod.fileCount = files
+    mod.routes = [route(root, 'game')]
+    mod.skipped = skipDocs(await walkFiles(mod.stagingDir), root)
+    mod.layoutBy = 'manual'
+    mod.checks = (mod.checks ?? []).filter((c) => c.level !== 'error')
+    const files = await planFiles(mod)
+    mod.sizeBytes = files.reduce((a, f) => a + f.size, 0)
+    mod.fileCount = files.length
   }
   mod.updatedAt = Date.now()
   saveMod(mod)
@@ -273,19 +434,51 @@ export async function openModFolder(gameId: string, modId?: string): Promise<voi
 // ---------------------------------------------------------------------------
 // Planning, conflicts, deployment
 
-async function planFor(gameId: string): Promise<{ plan: DeployPlan; profileId: string; order: string[] }> {
-  const game = requireGame(gameId)
+interface PlanResult {
+  plan: DeployPlan
+  profileId: string
+  order: string[]
+  ctx: GameContext
+  /** Enabled mods left out of the deployment, and why. */
+  excluded: Map<string, { state: ModDeployState; reason: string }>
+}
+
+/** A loader is usable when it is in the game, or when its mod is enabled and deploys with the others. */
+function loaderReady(ctx: GameContext, loaderId: string, enabledMods: InstalledMod[]): boolean {
+  const l = ctx.info.loaders.find((x) => x.id === loaderId)
+  if (l && (l.state === 'installed' || l.state === 'outdated')) return true
+  return enabledMods.some((m) => m.loaderId === loaderId && !(m.checks ?? []).some((c) => c.level === 'error'))
+}
+
+async function planFor(gameId: string): Promise<PlanResult> {
+  const ctx = await inspectGame(gameId)
   const profile = await activeProfile(gameId)
   const mods = allMods()[gameId] ?? {}
   const enabled = new Set(profile.enabled)
-  const planMods: PlanMod[] = []
+  const enabledMods: InstalledMod[] = []
   for (const id of profile.order) {
-    const mod = mods[id]
-    if (!mod || !enabled.has(id)) continue
-    planMods.push({ id, root: join(mod.stagingDir, ...mod.rootPath.split('/').filter(Boolean)), revision: mod.updatedAt, files: await modFiles(mod) })
+    if (mods[id] && enabled.has(id)) enabledMods.push(await ensureLayout(mods[id], ctx))
   }
-  const plan = buildPlan(planMods, profile.fileOverrides, `${game.modding.targetDir.toLowerCase()}|${game.modding.strategy}`)
-  return { plan, profileId: profile.id, order: profile.order }
+  const excluded: PlanResult['excluded'] = new Map()
+  const planMods: PlanMod[] = []
+  for (const mod of enabledMods) {
+    const error = (mod.checks ?? []).find((c) => c.level === 'error')
+    if (error) {
+      excluded.set(mod.id, { state: 'blocked', reason: error.message })
+      continue
+    }
+    const missingLoader = loadersNeeded(mod).find((id) => !loaderReady(ctx, id, enabledMods))
+    if (missingLoader) {
+      const l = ctx.info.loaders.find((x) => x.id === missingLoader)
+      excluded.set(mod.id, { state: 'needs_loader', reason: l?.blocked ?? `Needs ${l?.name ?? missingLoader}, which is not installed yet.` })
+      continue
+    }
+    const files = (await planFiles(mod)).filter((f) => ctx.info.targets.some((t) => t.id === f.target))
+    planMods.push({ id: mod.id, revision: mod.updatedAt, files })
+  }
+  const targets = ctx.info.targets.map((t) => `${t.id}=${t.dir.toLowerCase()}`).join(';')
+  const plan = buildPlan(planMods, profile.fileOverrides, `${targets}|${ctx.game.modding.strategy}`)
+  return { plan, profileId: profile.id, order: profile.order, ctx, excluded }
 }
 
 export async function getConflicts(gameId: string): Promise<ConflictReport> {
@@ -295,42 +488,96 @@ export async function getConflicts(gameId: string): Promise<ConflictReport> {
 
 const locks = new Map<string, Promise<unknown>>()
 
-function withLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
+export function withLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(gameId) ?? Promise.resolve()
   const next = prev.catch(() => {}).then(fn)
   locks.set(gameId, next)
-  void next.finally(() => {
-    if (locks.get(gameId) === next) locks.delete(gameId)
-  })
+  void next
+    .finally(() => {
+      if (locks.get(gameId) === next) locks.delete(gameId)
+    })
+    .catch(() => {})
   return next
 }
 
-async function ensureTarget(dir: string): Promise<void> {
-  if (await isDir(dir)) return
-  if (await isDir(dirname(dir))) {
-    await fsp.mkdir(dir)
-    return
+/** The game (or a launcher in its folder) is running: its files are locked and must not change underneath it. */
+async function runningCheck(game: Game, dirs: string[]) {
+  const reason = {
+    code: 'game_running',
+    title: `${game.name} is running`,
+    detail: `Close ${game.name} before deploying: Windows keeps the files of a running game locked, and changing them under it can break both.`,
+    advice: [`Close ${game.name}, then deploy again.`]
   }
-  throw new Error(`The deploy folder does not exist: ${dir}. Pick another one in the game settings.`)
+  if (runningGames().includes(game.id)) return reason
+  const exes = await runningExecutables().catch(() => [] as string[])
+  for (const d of dirs) if (d && gameProcessesIn(d, exes).length) return reason
+  return undefined
+}
+
+function summarize(report: DeployReport): DeployOutcomeSummary {
+  return { at: Date.now(), outcome: report.outcome, title: report.title, problem: report.problem }
+}
+
+const controllers = new Map<string, AbortController>()
+
+/** Listeners for deployment stages (the setup operation follows them). */
+export const deployProgressHooks = new Set<(gameId: string, p: Omit<DeployProgress, 'gameId'>) => void>()
+
+function reportProgress(gameId: string, p: Omit<DeployProgress, 'gameId'>): void {
+  emit('deploy:progress', { gameId, ...p })
+  for (const h of deployProgressHooks) h(gameId, p)
+}
+
+export function cancelDeploy(gameId: string): void {
+  controllers.get(gameId)?.abort()
 }
 
 export function deployGame(gameId: string): Promise<DeployReport> {
   return withLock(gameId, async () => {
-    const game = requireGame(gameId)
-    await ensureTarget(game.modding.targetDir)
-    const { plan, profileId } = await planFor(gameId)
-    return applyDeployment({
-      gameId,
-      profileId,
-      targetDir: game.modding.targetDir,
-      strategy: game.modding.strategy,
-      plan,
-      manifestPath: paths.deployManifest(gameId),
-      backupDir: paths.backups(gameId),
-      overwriteDir: paths.overwrite(gameId),
-      onProgress: (p) => emit('deploy:progress', { gameId, ...p }),
-      log
-    })
+    forgetInspection(gameId)
+    const { plan, profileId, ctx, excluded } = await planFor(gameId)
+    const { game, integration, info } = ctx
+    const env = integrationEnv()
+    const mods = listMods(gameId)
+    const controller = new AbortController()
+    controllers.set(gameId, controller)
+    let report: DeployReport
+    try {
+      report = await applyDeployment({
+        gameId,
+        profileId,
+        targets: engineTargets(info),
+        strategy: game.modding.strategy,
+        plan,
+        manifestPath: paths.deployManifest(gameId),
+        backupDir: paths.backups(gameId),
+        overwriteDir: paths.overwrite(gameId),
+        onProgress: (p) => reportProgress(gameId, p),
+        log,
+        signal: controller.signal,
+        precheck: async () => {
+          if (!info.valid && plan.entries.size) {
+            return { code: 'game_invalid', title: `${game.name} looks incomplete`, detail: info.problems.join(' '), advice: ['Fix the game installation (or its executable in the game settings), then deploy again.'] }
+          }
+          return runningCheck(game, [game.installDir, ...info.loaders.map((l) => l.dir ?? '').filter((d) => d && d.toLowerCase() !== game.installDir.toLowerCase())])
+        },
+        configure: integration.configure ? (m) => integration.configure!(game, info, m, mods, env, loaderHost) : undefined,
+        verifyExtra: integration.verify ? (m) => integration.verify!(game, info, m, mods, env) : undefined,
+        loadVerifiable: integration.loadVerifiable
+      })
+    } finally {
+      controllers.delete(gameId)
+    }
+    for (const [id, why] of excluded) {
+      const m = mods.find((x) => x.id === id)
+      report.notes.push(`${m?.name ?? id} was not deployed: ${why.reason}`)
+    }
+    const summary = summarize(report)
+    if (excluded.size && report.outcome === 'verified') summary.failedMods = [...excluded.keys()]
+    db().set('deployOutcomes', { ...(db().get('deployOutcomes') ?? {}), [gameId]: summary })
+    if (report.outcome === 'verified' || report.outcome === 'nothing') await cleanupRetired(gameId).catch(() => {})
+    forgetInspection(gameId)
+    return report
   })
 }
 
@@ -338,41 +585,84 @@ export function purgeGame(gameId: string): Promise<DeployReport> {
   return withLock(gameId, async () => {
     const game = requireGame(gameId)
     const manifest = await readManifest(paths.deployManifest(gameId))
-    return applyDeployment({
+    const ctx = await inspectGame(gameId, true).catch(() => undefined)
+    const env = integrationEnv()
+    const targets = Object.fromEntries(Object.entries(manifest?.targets ?? { game: game.modding.targetDir }).map(([id, dir]) => [id, { dir, userData: ctx?.info.targets.find((t) => t.id === id)?.userData }]))
+    const report = await applyDeployment({
       gameId,
       profileId: manifest?.profileId ?? '',
-      targetDir: manifest?.targetDir ?? game.modding.targetDir,
+      targets,
       strategy: manifest?.strategy ?? game.modding.strategy,
       plan: EMPTY_PLAN,
       manifestPath: paths.deployManifest(gameId),
       backupDir: paths.backups(gameId),
       overwriteDir: paths.overwrite(gameId),
-      onProgress: (p) => emit('deploy:progress', { gameId, ...p }),
-      log
+      onProgress: (p) => reportProgress(gameId, p),
+      log,
+      precheck: () => runningCheck(game, [game.installDir]),
+      configure: ctx?.integration.configure ? (m) => ctx.integration.configure!(game, ctx.info, m, listMods(gameId), env, loaderHost) : undefined
     })
+    db().set('deployOutcomes', { ...(db().get('deployOutcomes') ?? {}), [gameId]: summarize(report) })
+    forgetInspection(gameId)
+    return report
   })
+}
+
+export async function lastOutcome(gameId: string): Promise<DeployOutcomeSummary | undefined> {
+  return db().get('deployOutcomes')?.[gameId]
 }
 
 export async function deployStatus(gameId: string): Promise<DeployStatus> {
   const manifest = await readManifest(paths.deployManifest(gameId))
   const methods = { symlink: 0, hardlink: 0, copy: 0 }
   for (const e of manifest?.entries ?? []) methods[e.method]++
-  const { plan } = await planFor(gameId)
+  const { plan, ctx, excluded, order } = await planFor(gameId)
+  const profile = await activeProfile(gameId)
+  const enabled = new Set(profile.enabled)
   const deployed = Boolean(manifest && manifest.entries.length)
+  const inSync = deployed ? manifest!.planHash === plan.hash : plan.entries.size === 0
+  const last = db().get('deployOutcomes')?.[gameId]
+  const perMod: Record<string, ModDeployState> = {}
+  const live = new Set((manifest?.entries ?? []).map((e) => e.modId))
+  const wanted = new Set([...plan.entries.values()].map((e) => e.modId))
+  for (const id of order) {
+    if (!enabled.has(id)) {
+      perMod[id] = 'disabled'
+      continue
+    }
+    const ex = excluded.get(id)
+    if (ex) {
+      perMod[id] = ex.state
+      continue
+    }
+    if (live.has(id)) {
+      // "verified" only when the integration checked that the game loads it; plain file deployments are "deployed".
+      perMod[id] = inSync && manifest?.verified?.ok && manifest.verified.loadVerified ? 'verified' : inSync ? 'deployed' : 'prepared'
+    } else if (wanted.has(id) && last && (last.outcome === 'failed' || last.outcome === 'rolled_back')) {
+      perMod[id] = last.outcome
+    } else {
+      perMod[id] = wanted.has(id) ? 'prepared' : 'deployed'
+    }
+  }
   return {
     gameId,
     deployed,
-    inSync: deployed ? manifest!.planHash === plan.hash : plan.entries.size === 0,
+    inSync,
     fileCount: manifest?.entries.length ?? 0,
     methods,
     deployedAt: manifest?.deployedAt,
-    profileId: manifest?.profileId
+    profileId: manifest?.profileId,
+    targets: ctx.info.targets,
+    last,
+    perMod,
+    interrupted: await hasInterruptedDeployment(paths.deployManifest(gameId))
   }
 }
 
 export async function probeGame(gameId: string): Promise<LinkCapabilities> {
   const game = requireGame(gameId)
-  let target = game.modding.targetDir
+  const info = await integrationInfo(gameId).catch(() => undefined)
+  let target = info?.targets.find((t) => t.id === 'game')?.dir ?? game.modding.targetDir
   while (!(await isDir(target)) && dirname(target) !== target) target = dirname(target)
   return probeLinks(paths.modStaging(gameId), target)
 }
@@ -380,10 +670,19 @@ export async function probeGame(gameId: string): Promise<LinkCapabilities> {
 /** Purges deployed files, then deletes the game's mods and profiles. */
 export async function forgetGameMods(gameId: string): Promise<void> {
   const manifest = await readManifest(paths.deployManifest(gameId))
-  if (manifest?.entries.length) await purgeGame(gameId)
+  if (manifest?.entries.length) {
+    const r = await purgeGame(gameId)
+    if (r.outcome === 'failed' || r.outcome === 'rolled_back') throw new Error(`The game still has NexusForge's files: ${r.problem?.detail ?? r.title}`)
+  }
   for (const m of listMods(gameId)) await removeStaging(m.stagingDir, gameId)
   const all = allMods()
   delete all[gameId]
   db().set('mods', all)
   await deleteAllProfiles(gameId)
+}
+
+/** A short fingerprint of what a game's mods would deploy (tests and logs). */
+export async function planFingerprint(gameId: string): Promise<string> {
+  const { plan } = await planFor(gameId)
+  return createHash('sha1').update(plan.hash).digest('hex').slice(0, 10)
 }

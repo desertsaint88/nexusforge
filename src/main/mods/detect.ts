@@ -17,7 +17,7 @@ const log = scoped('detect')
 async function managedFiles(game: Game): Promise<Array<[string, string]>> {
   const manifest = await readManifest(paths.deployManifest(game.id))
   if (!manifest) return []
-  return manifest.entries.map((e) => [join(manifest.targetDir, ...e.rel.split('/')).toLowerCase(), e.modId])
+  return manifest.entries.filter((e) => manifest.targets[e.target]).map((e) => [join(manifest.targets[e.target], ...e.rel.split('/')).toLowerCase(), e.modId])
 }
 
 export function allDetected(): Record<string, GameModInfo> {

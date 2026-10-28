@@ -223,6 +223,14 @@ function ModsSettings({ s, update }: { s: Settings; update(p: Partial<Settings>)
           </div>
         </Field>
       </Panel>
+      <Panel title="One-click setup" icon={<Wand2 />}>
+        <Row
+          title="Set up and deploy after a download"
+          description="When a download is installed, NexusForge installs the mod loader the game needs (BepInEx, tModLoader; official releases only), deploys and checks every file. Off: mods wait in storage until you press Deploy."
+        >
+          <Toggle checked={s.autoDeploy} onChange={(v) => update({ autoDeploy: v })} />
+        </Row>
+      </Panel>
       <Panel title="Dependencies" icon={<Link2 />}>
         <Row title="When a mod needs other mods" description="Required mods are placed before the mod in the load order. Mods from outside NexusForge (script extenders, DLC) are always listed so you can get them yourself.">
           <Segmented<Settings['dependencyMode']>
@@ -253,14 +261,18 @@ function ModsSettings({ s, update }: { s: Settings; update(p: Partial<Settings>)
         </Field>
       </Panel>
       <Panel title="Default deployment method" icon={<Wand2 />}>
-        <Row title="For newly added games" description="Each game can override this in its settings. Symlinks fall back to hardlinks, then copies, automatically.">
+        <Row
+          title="For newly added games"
+          description="Automatic hardlinks on the same drive and copies otherwise: no admin rights, no Developer Mode. Symlinks are only used when you pick them and Windows allows them. Each game can override this in its settings."
+        >
           <Segmented<DeployStrategy>
             value={s.defaultStrategy}
             onChange={(v) => update({ defaultStrategy: v })}
             options={[
-              { value: 'symlink', label: 'Symlink' },
+              { value: 'auto', label: 'Automatic' },
               { value: 'hardlink', label: 'Hardlink' },
-              { value: 'copy', label: 'Copy' }
+              { value: 'copy', label: 'Copy' },
+              { value: 'symlink', label: 'Symlink' }
             ]}
           />
         </Row>

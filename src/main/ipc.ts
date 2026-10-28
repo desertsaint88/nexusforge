@@ -14,6 +14,8 @@ import * as panel from './web/panel'
 import * as accounts from './accounts/accounts'
 import * as detect from './mods/detect'
 import * as updates from './mods/updates'
+import * as setup from './integrations/orchestrator'
+import { forgetIntegration } from './integrations/registry'
 import { applyUiScale } from './window'
 
 const log = scoped('ipc')
@@ -113,7 +115,7 @@ export function registerIpc(rendererUrl: string): void {
   handle('settings:set', async (_e, patch) => {
     const allowed: Array<keyof Settings> = [
       'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'scanAllDrives', 'scanOnStartup', 'modStorageDir',
-      'defaultStrategy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete', 'uiScale'
+      'defaultStrategy', 'autoDeploy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete', 'uiScale'
     ]
     const clean: Partial<Settings> = {}
     for (const k of allowed) if (patch && k in patch) (clean as Record<string, unknown>)[k] = patch[k]
@@ -131,12 +133,27 @@ export function registerIpc(rendererUrl: string): void {
     return result
   })
   handle('library:addManual', (_e, input) => library.addManualGame(input))
-  handle('library:update', (_e, id, patch) => library.updateGame(str(id, 'game'), patch ?? {}))
+  handle('library:update', (_e, id, patch) => {
+    const game = library.updateGame(str(id, 'game'), patch ?? {})
+    // A new executable, name or deploy folder can change which integration applies and where things go.
+    forgetIntegration(id)
+    mods.forgetInspection(id)
+    return game
+  })
   handle('library:remove', async (_e, id) => {
     await mods.forgetGameMods(str(id, 'game'))
     library.removeGameRecord(id)
   })
-  handle('library:launch', (_e, id) => library.launchGame(str(id, 'game')))
+  handle('library:launch', async (_e, id, variant) => {
+    const gameId = str(id, 'game')
+    const v = variant === 'vanilla' || variant === 'modded' ? variant : undefined
+    const override = v ? await setup.launchSpecFor(gameId, v) : undefined
+    const started = Date.now()
+    // Once the game is closed (and shortly after start), read the mod loader's log to show what it loaded.
+    const check = () => void setup.checkLastLaunch(gameId, started).catch(() => {})
+    await library.launchGame(gameId, override ? { ...override, label: v } : undefined, check)
+    setTimeout(check, 45_000)
+  })
   handle('library:running', () => library.runningGames())
   handle('library:fetchArtwork', (_e, id) => library.refetchArtwork(str(id, 'game')))
   handle('library:detectExecutables', (_e, dir) => library.detectExecutables(str(dir, 'folder')))
@@ -178,10 +195,25 @@ export function registerIpc(rendererUrl: string): void {
     return result
   }
   handle('deploy:run', (_e, gameId) => rescanAfter(str(gameId, 'game'), mods.deployGame(gameId)))
+  handle('deploy:setup', (_e, gameId) => rescanAfter(str(gameId, 'game'), setup.setupAndDeploy(gameId, { quiet: true })))
+  handle('deploy:cancel', (_e, gameId) => mods.cancelDeploy(str(gameId, 'game')))
   handle('deploy:purge', (_e, gameId) => rescanAfter(str(gameId, 'game'), mods.purgeGame(gameId)))
   handle('deploy:status', (_e, gameId) => mods.deployStatus(str(gameId, 'game')))
   handle('deploy:probe', (_e, gameId) => mods.probeGame(str(gameId, 'game')))
   handle('conflicts:get', (_e, gameId) => mods.getConflicts(str(gameId, 'game')))
+
+  handle('integration:inspect', (_e, gameId, fresh) => mods.integrationInfo(str(gameId, 'game'), Boolean(fresh)))
+  handle('integration:installLoader', (_e, gameId, loaderId) => rescanAfter(str(gameId, 'game'), setup.installLoader(gameId, str(loaderId, 'loader'))))
+  handle('integration:removeLoader', async (_e, gameId, loaderId) => {
+    await rescanAfter(str(gameId, 'game'), setup.removeLoader(gameId, str(loaderId, 'loader')))
+    return mods.integrationInfo(gameId, true)
+  })
+  handle('integration:operation', (_e, gameId) => setup.setupState(str(gameId, 'game')))
+  handle('integration:lastLaunch', (_e, gameId) => setup.lastLaunch(str(gameId, 'game')))
+  handle('integration:shortcut', (_e, gameId, variant, where) =>
+    setup.createShortcut(str(gameId, 'game'), variant === 'vanilla' ? 'vanilla' : 'modded', where === 'desktop' ? 'desktop' : 'startmenu')
+  )
+  handle('integration:shortcuts', (_e, gameId) => setup.listShortcuts(str(gameId, 'game')))
 
   handle('sources:list', () => sources.listSources())
   handle('sources:search', (_e, id, q, gameId) => sources.searchSource(str(id, 'source'), String(q ?? ''), gameId || undefined))

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, session } from 'electron'
 import { initLogger, logger, setLogLevel } from './logger'
 import { registerMediaScheme, handleMediaProtocol } from './media-protocol'
-import { getSettings, runOnce, setSettings } from './store'
+import { db, getSettings, runOnce, setSettings } from './store'
 import { registerIpc } from './ipc'
 import { createMainWindow, rendererUrl } from './window'
 import { loadSources } from './sources/registry'
@@ -62,6 +62,24 @@ if (!app.requestSingleInstanceLock()) {
     // 1.2 moved to a darker, muted look; the old default violet becomes graphite once (a chosen accent stays).
     await runOnce('theme-dark-1.2', async () => {
       if (getSettings().accent === 'violet') setSettings({ accent: 'graphite' })
+    })
+    // Before 1.4 every game defaulted to symlinks, which Windows refuses without admin rights or Developer Mode
+    // (the "enable Developer Mode" message). Games that still have that old default move to automatic
+    // (hardlinks on the same drive, copies otherwise); deployed files are re-placed on the next deploy.
+    await runOnce('deploy-auto-1.4', async () => {
+      if (getSettings().defaultStrategy === 'symlink') setSettings({ defaultStrategy: 'auto' })
+      const games = db().get('games')
+      let moved = 0
+      for (const g of Object.values(games)) {
+        if (g.modding?.strategy === 'symlink') {
+          g.modding.strategy = 'auto'
+          moved++
+        }
+      }
+      if (moved) {
+        db().set('games', games)
+        logger.info(`moved ${moved} game(s) from symlinks to automatic deployment`)
+      }
     })
 
     registerIpc(rendererUrl())

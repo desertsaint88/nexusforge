@@ -1,7 +1,8 @@
 import Store from 'electron-store'
 import { app, safeStorage } from 'electron'
 import { join } from 'node:path'
-import type { DownloadItem, Game, GameModInfo, InstalledMod, Settings } from '@shared/types'
+import type { DeployOutcomeSummary, DownloadItem, Game, GameModInfo, InstalledMod, Settings, ShortcutInfo } from '@shared/types'
+import type { IntegrationState } from './integrations/types'
 
 interface StoredSettings extends Omit<Settings, 'sources'> {
   /** apiKey is kept encrypted with the OS keychain (DPAPI on Windows). */
@@ -30,6 +31,14 @@ interface Schema {
   detected: Record<string, GameModInfo>
   /** One-time upgrade steps that already ran (name -> time). */
   migrations: Record<string, number>
+  /** Per game: mod loaders NexusForge installed, tModLoader names it switched on, last loader log. */
+  integrations: Record<string, IntegrationState>
+  /** Per game: how the last deployment ended. */
+  deployOutcomes: Record<string, DeployOutcomeSummary>
+  /** Storage folders of replaced mod versions, kept until a deployment without them succeeded (for rollback). */
+  retiredStaging: Array<{ gameId: string; dir: string; at: number }>
+  /** Shortcuts NexusForge created. */
+  shortcuts: ShortcutInfo[]
 }
 
 function defaultSettings(): StoredSettings {
@@ -44,7 +53,8 @@ function defaultSettings(): StoredSettings {
     scanAllDrives: true,
     scanOnStartup: true,
     modStorageDir: join(app.getPath('userData'), 'mods'),
-    defaultStrategy: 'symlink',
+    defaultStrategy: 'auto',
+    autoDeploy: true,
     dependencyMode: 'ask',
     steamcmdPath: '',
     steamAccount: '',
@@ -73,7 +83,11 @@ export function db(): Store<Schema> {
         window: { width: 1440, height: 900, maximized: false },
         accounts: {},
         detected: {},
-        migrations: {}
+        migrations: {},
+        integrations: {},
+        deployOutcomes: {},
+        retiredStaging: [],
+        shortcuts: []
       }
     })
     // Merge in settings keys added in newer versions.

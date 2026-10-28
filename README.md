@@ -32,6 +32,14 @@ Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · Reac
   - Cyberpunk 2077: Cyber Engine Tweaks, RED4ext, redscript, ArchiveXL, TweakXL, Codeware; a mod's files say which it needs.
   - Terraria: tModLoader through Steam, or its GitHub `tModLoader.zip` for other copies when tModLoader's own start check (`InstallVerifier.cs`: an unmodified `Terraria.exe` of the version a release is made for, no `steam_api.dll`) accepts the copy; NexusForge picks the newest release that does, and never patches that check.
 - Works the same for store copies and plain game folders on any drive. **Proxy DLLs** (`proxy.ts`): loaders start through `winhttp.dll` / `version.dll` / `winmm.dll` / `dwmapi.dll` / `dinput8.dll` next to the game. Copies of games often use those names for their own files (Steam or Social Club emulators, OnlineFix's `winmm.dll`); NexusForge reads what each DLL is and never replaces one that is not the loader's: the loader goes in under another name it supports, or the panel says which files are in the way. Anti-cheat (EasyAntiCheat, BattlEye) is shown as a warning; NexusForge does nothing to get past it.
+
+**Verification & diagnostics** (details: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md))
+- Results say what was actually checked: **verified** (files in place and the integration checked the game will load them), **deployed, loading not confirmed** (files in place and checked, nothing more is knowable), failed / rolled back. Nothing is shown as loaded until the loader's log says so.
+- **Shared package strategies** for every game, before the game's own rules: setup programs are never copied into a game (*Run installer* starts one after asking), save games go into the game's real save folder in a free slot or are not deployed, mods for closed mod managers (NexusTools) are recognized instead of spread over the game folder, ReShade presets are flagged when ReShade isn't installed.
+- **Runtime evidence per mod** from the loader's log after a start: Script Hook V / Script Hook V .NET per script (including the API version a script needs: then the official SHVDN nightly is offered), BepInEx per plugin, and the tModLoader, MelonLoader, UE4SS, CET and redscript logs where they name files. Games without such a log say so.
+- **Diagnose tab** per game: installation, deployment journal, files missing or changed on disk, packages that weren't deployed, missing/outdated loaders, the integration's own checks and runtime evidence, each with a code (`NF-…`), confidence and evidence. Detection never changes anything; fixes (deploy again, install/update loader, set the deploy folder, run installer, remove a broken entry) ask first and re-check afterwards. *Export report* writes Markdown with the user folder, user name, e-mail addresses and tokens taken out.
+- GTA V: save games go into the copy's own profile folder (Rockstar or the RUNE Social Club emulator); script mods' data folders go into `scripts\` and their source code stays out.
+
 **Mod sources**
 - Adapter interface (`ModSourceAdapter`) with Nexus Mods, Steam Workshop (SteamCMD), Thunderstore, mod.io, CurseForge, ModDB, Modrinth, the BeamNG repository and mod loaders (BepInEx, MelonLoader from GitHub) built in. Requirements are resolved recursively and installed first.
 - **Sorting**: Best match, Top rated, Most downloaded (all time and recent), Trending and Recently added/updated. Each source sorts on its side where it can (Nexus GraphQL with date windows for trending/recent, mod.io `_sort`, CurseForge `sortField`, Workshop `browsesort` + `days`, Thunderstore/Modrinth orderings, BeamNG and ModDB list orders); otherwise NexusForge sorts the results and says so. Mods already installed in the game are marked in the list and the details, with an "Installed" filter.
@@ -62,6 +70,7 @@ node scripts/smoke-sources.mjs   # live checks against the real mod sites (.smok
 node scripts/smoke-1.2.mjs       # artwork, installed-mod detection, sorting, look (this PC's library, read-only)
 node scripts/smoke-cloudflare.mjs  # Nexus login/registration pass Cloudflare inside the app (no automation driver)
 npx vitest run --config scripts/live/vitest.live.config.ts   # live checks: real loader downloads, real starts of a copied game, this PC's library (read-only)
+node scripts/probe-diagnostics.mjs   # Diagnose on a copy of the real data file (game folders only read), reports in .smoke/diagnostics
 npm run dist         # NSIS installer + portable exe in release/
 ```
 
@@ -74,7 +83,9 @@ Set `NEXUSFORGE_SMOKE_FOLDERS="C:\Games;E:\Games"` to also scan those folders (r
 ```
 src/main        Electron main process
   library/      scanners (steam, epic, xbox, gog, custom), artwork, presets, launching
-  mods/         archive install, layout detection, plan/conflicts, deploy engine, profiles
+  mods/         archive install, layout detection, shared package strategies (classify.ts), runtime evidence
+                (runtime.ts), plan/conflicts, deploy engine, profiles
+  diagnostics/  read-only checks (core.ts), confirmed repairs, report export with redaction
   integrations/ per-game and per-engine integrations, mod loaders (zip-loader.ts), proxy DLL checks, one-click setup
   sources/      adapter interface, Nexus/Thunderstore/Modrinth, feeds, plugin loader
   downloads/    download manager

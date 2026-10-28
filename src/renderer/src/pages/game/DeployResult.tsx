@@ -12,6 +12,7 @@ import { STAGE_LABEL } from '../../store/mods'
 
 const OUTCOME = {
   verified: { label: 'Verified', tone: 'success', box: 'border-emerald-400/15 bg-emerald-500/[0.05]', icon: <CircleCheck className="size-4.5 text-emerald-300" /> },
+  deployed: { label: 'Deployed', tone: 'info', box: 'border-sky-400/15 bg-sky-500/[0.04]', icon: <CircleCheck className="size-4.5 text-sky-300" /> },
   nothing: { label: 'Nothing to do', tone: 'neutral', box: 'border-white/[0.06] bg-black/20', icon: <Info className="size-4.5 text-ink-300" /> },
   rolled_back: { label: 'Rolled back', tone: 'warning', box: 'border-amber-400/20 bg-amber-500/[0.06]', icon: <RotateCcw className="size-4.5 text-amber-300" /> },
   failed: { label: 'Failed', tone: 'danger', box: 'border-rose-400/20 bg-rose-500/[0.06]', icon: <CircleX className="size-4.5 text-rose-300" /> }
@@ -35,10 +36,10 @@ export function DeployResult({ report, last, onDismiss }: { report?: DeployRepor
   const outcome = report?.outcome ?? last?.outcome
   if (!outcome) return null
   // A stored success needs no card; failures stay visible until the next deployment.
-  if (!report && (outcome === 'verified' || outcome === 'nothing')) return null
-  const base = OUTCOME[outcome]
+  if (!report && (outcome === 'verified' || outcome === 'deployed' || outcome === 'nothing')) return null
   // Files in place but no rules for how the game loads them: "Deployed", not "Verified".
-  const o = outcome === 'verified' && report?.verification && !report.verification.loadVerified ? { ...base, label: 'Deployed' } : base
+  const o = OUTCOME[outcome]
+  const success = outcome === 'verified' || outcome === 'deployed'
   const problem = report?.problem ?? last?.problem
   const checks = report?.verification?.checks ?? []
   const failedChecks = checks.filter((c) => !c.ok)
@@ -71,7 +72,7 @@ export function DeployResult({ report, last, onDismiss }: { report?: DeployRepor
             </div>
           )}
 
-          {report && outcome === 'verified' && (
+          {report && success && (
             <p className="mt-1 text-[12.5px] text-ink-300">
               {live.toLocaleString()} file{live === 1 ? '' : 's'} live
               {report.placed ? ` · ${report.placed} placed` : ''}
@@ -81,7 +82,7 @@ export function DeployResult({ report, last, onDismiss }: { report?: DeployRepor
               {report.methods.copy ? ` · ${report.methods.copy} copied` : ''}
               {report.methods.symlink ? ` · ${report.methods.symlink} symlinked` : ''}
               {report.verification ? ` · ${report.verification.checked.toLocaleString()} checked` : ''}
-              {report.verification && !report.verification.loadVerified && live > 0 ? '. The files are in place; NexusForge has no rules for this game, so it cannot tell whether the game loads them.' : '.'}
+              {report.verification && !report.verification.loadVerified && live > 0 ? '. The files are in place, but NexusForge cannot tell from them whether the game loads them; start the game, then run Diagnose to read what its mod loader logged.' : '. Whether each mod really runs shows after the next start (from the mod loader\'s log, where the game has one).'}
             </p>
           )}
 
@@ -148,7 +149,7 @@ export function DeployResult({ report, last, onDismiss }: { report?: DeployRepor
               Details
             </Button>
           )}
-          {outcome !== 'verified' && outcome !== 'nothing' && (
+          {!success && outcome !== 'nothing' && (
             <Button size="sm" variant="ghost" icon={<FileText className="size-3.5" />} onClick={() => void invoke('app:openLogs')}>
               Log
             </Button>

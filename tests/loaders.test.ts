@@ -275,7 +275,7 @@ describe('any Unreal Engine game folder', () => {
     expect(mods[2]).toMatchObject({ needsLoader: 'ue4ss' })
     expect(mods[3]).toMatchObject({ needsLoader: 'ue4ss' })
     expect(report.problem).toBeUndefined()
-    expect(report.outcome).toBe('verified')
+    expect(report.outcome).toBe('deployed')
     expect(report.verification?.checks.filter((c) => !c.ok)).toEqual([])
     expect((await fsp.readdir(join(dir, 'BET', 'Content', 'Paks', '~mods'))).sort()).toEqual(['BetterLights_P.pak', 'BetterLights_P.ucas', 'BetterLights_P.utoc'])
     expect(await fsp.readFile(join(dir, 'BET', 'Content', 'Paks', 'LogicMods', 'MoreRooms.pak'), 'utf8')).toBe('bp')
@@ -366,7 +366,7 @@ describe('GTA V (any copy)', () => {
     expect(mods[1]).toMatchObject({ needsLoader: 'scripthookv' })
     expect(mods[1].skipped?.map((s) => s.path).sort()).toEqual(['Speedometer/README.txt', 'Speedometer/ScriptHookV.dll'])
     // Every file is checked; whether the game loads them only shows in Script Hook V's log after a start.
-    expect(report.outcome).toBe('verified')
+    expect(report.outcome).toBe('deployed')
     expect(report.verification?.loadVerified).toBe(false)
     expect(report.verification?.checks.filter((c) => !c.ok)).toEqual([])
     expect(await fsp.readFile(join(dir, 'ScriptHookV.dll'), 'utf8')).toBe('SHV')

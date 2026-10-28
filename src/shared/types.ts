@@ -167,7 +167,7 @@ export interface ModRoute {
   to: string
 }
 
-export type ModKind = 'loader' | 'plugin' | 'tmod' | 'world' | 'player' | 'resourcepack' | 'savegame' | 'archive' | 'files'
+export type ModKind = 'loader' | 'plugin' | 'tmod' | 'world' | 'player' | 'resourcepack' | 'savegame' | 'archive' | 'files' | 'installer' | 'preset' | 'framework-mod'
 
 export interface SkippedFile {
   path: string
@@ -178,6 +178,8 @@ export interface ModCheck {
   level: 'error' | 'warning' | 'info'
   message: string
   code?: string
+  /** The user can resolve it (run the installer, install ReShade); NexusForge can't do it by itself. */
+  userAction?: string
 }
 
 export interface Profile {
@@ -339,11 +341,23 @@ export interface DeployStatus {
   last?: DeployOutcomeSummary
   /** Per installed mod. */
   perMod: Record<string, ModDeployState>
+  /** Per deployed mod: what the game's last start says (only when the loader's log names it). */
+  runtime?: Record<string, ModRuntime>
   /** A deployment was cut off (crash, power loss); the next deploy restores the state before it first. */
   interrupted?: boolean
 }
 
-export type DeployOutcome = 'verified' | 'failed' | 'rolled_back' | 'nothing'
+/**
+ * verified: files in place and the integration checked that the game will load them (loader present, enabled);
+ * deployed: files in place and every one checked, but NexusForge can't tell whether the game loads them.
+ * Neither says the mod ran: that only comes from the loader's log after a start (ModRuntime).
+ */
+export type DeployOutcome = 'verified' | 'deployed' | 'failed' | 'rolled_back' | 'nothing'
+
+/** The deployment worked (nothing to roll back or fix). */
+export function outcomeOk(o: DeployOutcome | undefined): boolean {
+  return o === 'verified' || o === 'deployed' || o === 'nothing'
+}
 
 export interface DeployOutcomeSummary {
   at: number
@@ -488,6 +502,8 @@ export interface IntegrationInfo {
   shortcutVariants?: Array<'vanilla' | 'modded'>
   /** What NexusForge does for this game. */
   capabilities: string[]
+  /** What the game's integration implements, capability by capability (unsupported ones are reported, not faked). */
+  supports?: IntegrationCapabilities
   warnings: string[]
   /** What it can't do here, plainly. */
   limitations: string[]
@@ -521,6 +537,123 @@ export interface LaunchCheck {
   errors: string[]
   logFile?: string
   at?: number
+  /** Per file the loader reported on (the log names the file): loaded, or failed and why. */
+  files?: RuntimeFileResult[]
+}
+
+export interface RuntimeFileResult {
+  /** File name as the log names it ("ZombiesV.dll"), or the plugin's display name when byName is set. */
+  file: string
+  /** The log names a plugin ("Medical Brutalism 4.7.10"), not a file: matched to a mod by name and version. */
+  byName?: boolean
+  ok: boolean
+  /** The log lines that say so. */
+  evidence: string[]
+  /** The file needs a newer loader than the one installed ("Script Hook V .NET API 3.7.0"). */
+  needs?: { loaderId: string; version: string }
+}
+
+/** What the game's last start says about one mod. */
+export interface ModRuntime {
+  /** loaded: the loader's log names the mod's files as loaded; failed: it names them with an error; unknown: no evidence. */
+  state: 'loaded' | 'failed' | 'unknown'
+  at?: number
+  evidence: string[]
+  logFile?: string
+  needs?: { loaderId: string; version: string }
+}
+
+// ---------------------------------------------------------------------------
+// Capabilities and diagnostics
+
+/** Capabilities a game integration genuinely implements. */
+export interface IntegrationCapabilities {
+  /** Recognizes the game (and edition) from its files. */
+  detect: boolean
+  /** Reads the game's version. */
+  version: boolean
+  /** Knows the game's mod formats and where each goes. */
+  classify: boolean
+  /** Installs mod loaders from their official channel. */
+  loaders: boolean
+  /** Writes loader configuration (enabled lists). */
+  configure: boolean
+  /** Checks that the files the game loads are where it loads them. */
+  verifyFiles: boolean
+  /** Checks that the game will load what was deployed (loader present, enabled, launch target). */
+  verifyLoad: boolean
+  /** Reads the loader's log after a start (runtime evidence). */
+  runtimeLog: boolean
+  /** Starts the game with / without mods. */
+  launch: boolean
+  /** Knows where the game keeps saves (save-game mods go there). */
+  saves: boolean
+  /** Contributes game-specific diagnostic checks. */
+  diagnose: boolean
+  /** Removes everything it deployed, restoring replaced files. */
+  uninstall: boolean
+}
+
+export type DiagnosticSeverity = 'error' | 'warning' | 'info'
+/** confirmed: the evidence shows it; likely: strong indication; possible: worth checking. */
+export type DiagnosticConfidence = 'confirmed' | 'likely' | 'possible'
+export type DiagnosticCategory = 'installation' | 'deployment' | 'package' | 'loader' | 'compatibility' | 'runtime' | 'configuration' | 'state'
+
+export interface DiagnosticFix {
+  /** Fix action id ('deploy', 'install-loader', 'relayout', 'set-deploy-dir', 'run-installer', 'remove-mod'). */
+  id: string
+  label: string
+  /** What it changes, in words, shown before the user confirms. */
+  description: string
+  /** Changes files or settings (asks for confirmation first). Read-only actions (open a folder) are not. */
+  consequential: boolean
+  params?: Record<string, string>
+}
+
+export interface DiagnosticFinding {
+  /** Stable code ("NF-DEP-002"), see docs/INTEGRATIONS.md. */
+  code: string
+  category: DiagnosticCategory
+  severity: DiagnosticSeverity
+  confidence: DiagnosticConfidence
+  title: string
+  detail: string
+  /** What was looked at: file paths, log lines, recorded state. */
+  evidence: string[]
+  modIds?: string[]
+  /** NexusForge can repair it (with the user's confirmation). */
+  fixes: DiagnosticFix[]
+  /** Needs the user (something NexusForge can't or won't do by itself). */
+  userAction?: string
+}
+
+export interface DiagnosticModRow {
+  id: string
+  name: string
+  version?: string
+  kind?: ModKind
+  enabled: boolean
+  state: ModDeployState
+  runtime: ModRuntime
+  needs: string[]
+  problems: string[]
+}
+
+export interface DiagnosticReport {
+  gameId: string
+  gameName: string
+  at: number
+  integration: { id: string; name: string; support: IntegrationInfo['support']; supports: IntegrationCapabilities }
+  installation: { installDir: string; exePath?: string; deployDir: string; distribution: string; version?: string; valid: boolean; problems: string[] }
+  targets: DeployTarget[]
+  loaders: Array<Pick<LoaderStatus, 'id' | 'name' | 'state' | 'version' | 'latest' | 'blocked' | 'required'>>
+  deployment: { deployed: boolean; inSync: boolean; fileCount: number; deployedAt?: number; interrupted?: boolean; last?: DeployOutcomeSummary }
+  lastLaunch?: LaunchCheck
+  mods: DiagnosticModRow[]
+  findings: DiagnosticFinding[]
+  summary: { errors: number; warnings: number; infos: number; fixable: number }
+  /** How long the checks took. */
+  durationMs: number
 }
 
 export interface ShortcutInfo {

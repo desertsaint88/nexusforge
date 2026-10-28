@@ -6,7 +6,7 @@
 import { app, shell } from 'electron'
 import { promises as fsp } from 'node:fs'
 import { join } from 'node:path'
-import type { DeployReport, IntegrationInfo, LaunchCheck, LaunchSpec, SetupProgress, SetupStep, ShortcutInfo } from '@shared/types'
+import { outcomeOk, type DeployReport, type IntegrationInfo, type LaunchCheck, type LaunchSpec, type SetupProgress, type SetupStep, type ShortcutInfo } from '@shared/types'
 import { emit, toast } from '../events'
 import { db } from '../store'
 import { scoped } from '../logger'
@@ -127,7 +127,7 @@ async function runDeploy(op: Operation, gameId: string): Promise<DeployReport> {
   const unsubscribe = progressListener(gameId, (phase, done, total) => op.update(step, { detail: phaseLabel(phase), progress: total ? done / total : undefined }))
   try {
     const report = await deployGame(gameId)
-    const ok = report.outcome === 'verified' || report.outcome === 'nothing'
+    const ok = outcomeOk(report.outcome)
     op.update(step, { state: ok ? 'done' : 'failed', detail: report.title, progress: 1 })
     return report
   } finally {
@@ -161,7 +161,7 @@ deployProgressHooks.add((gameId, p) => {
 })
 
 function announce(gameName: string, report: DeployReport, quiet: boolean): void {
-  if (report.outcome === 'verified') {
+  if (report.outcome === 'verified' || report.outcome === 'deployed') {
     const notes = report.notes.filter((n) => n.includes('was not deployed'))
     if (notes.length) toast('warning', `${gameName}: ${report.title}`, notes.join(' '))
     else if (!quiet) toast('success', `${gameName} is ready`, report.title)
@@ -191,7 +191,7 @@ export function setupAndDeploy(gameId: string, opts: { quiet?: boolean; signal?:
       op.update(check, { state: info.valid ? 'done' : 'failed', detail: info.valid ? `${info.name} · ${info.distribution.label}${info.version ? ` · ${info.version}` : ''}` : info.problems.join(' ') })
       for (const loaderId of await neededLoaders(gameId, info)) await runLoaderInstall(op, gameId, loaderId, opts.signal)
       const report = await runDeploy(op, gameId)
-      const ok = report.outcome === 'verified' || report.outcome === 'nothing'
+      const ok = outcomeOk(report.outcome)
       op.finish(ok, ok ? undefined : (report.problem?.detail ?? report.title))
       announce(game.name, report, Boolean(opts.quiet))
       return report
@@ -220,7 +220,7 @@ export function installLoader(gameId: string, loaderId: string, signal?: AbortSi
       throw new Error(op.p.steps.at(-1)?.detail ?? `Could not install ${name}.`)
     }
     const report = await runDeploy(op, gameId)
-    const fine = report.outcome === 'verified' || report.outcome === 'nothing'
+    const fine = outcomeOk(report.outcome)
     op.finish(fine, fine ? undefined : report.title)
     announce(game.name, report, false)
     return report

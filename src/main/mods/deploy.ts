@@ -1025,12 +1025,13 @@ export async function applyDeployment(opts: DeployOptions): Promise<DeployReport
     }
     for (const e of r.manifest?.entries ?? []) report.methods[e.method]++
     const live = r.manifest?.entries.length ?? 0
-    report.outcome = live || report.removed || report.kept ? 'verified' : 'nothing'
+    // 'verified' only when the integration checked that the game loads the files; a plain file check is 'deployed'.
+    report.outcome = live ? (report.verification.loadVerified ? 'verified' : 'deployed') : report.removed || report.kept ? 'verified' : 'nothing'
     report.title =
       report.outcome === 'nothing'
         ? 'Nothing to deploy: no mod is enabled'
         : live
-          ? `${live.toLocaleString()} file${live === 1 ? '' : 's'} deployed${report.verification.loadVerified ? ' and verified' : ', every file checked'}`
+          ? `${live.toLocaleString()} file${live === 1 ? '' : 's'} deployed${report.verification.loadVerified ? ' and verified' : ', every file checked (loading not confirmed)'}`
           : 'Mods removed from the game, original files restored'
     stage.end()
   } catch (err) {

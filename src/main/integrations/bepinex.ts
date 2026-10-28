@@ -6,7 +6,7 @@
 
 import { promises as fsp } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import type { Game, InstalledMod, IntegrationInfo, LaunchCheck, LoaderStatus, ModCheck, ModRoute, SkippedFile, VerifyCheck } from '@shared/types'
+import type { Game, InstalledMod, IntegrationInfo, LaunchCheck, LoaderStatus, ModCheck, ModRoute, RuntimeFileResult, SkippedFile, VerifyCheck } from '@shared/types'
 import type { Classification, GameIntegration, IntegrationEnv, IntegrationState, LoaderAdapter, StagedPackage } from './types'
 import { children, compareVersions, distributionOf, fileExists, folderName, isDocFile, route, under, unwrap } from './common'
 import { fittingAssets, gameRuntime, type GameRuntime } from '../sources/frameworks'
@@ -305,13 +305,21 @@ export async function readBepInExLog(dir: string, since: number): Promise<Launch
     const st = await fsp.stat(file)
     if (st.mtimeMs < since - 5000) return { ran: false, loaded: [], errors: [], logFile: file, at: st.mtimeMs }
     const text = await fsp.readFile(file, 'utf8')
-    const loaded = [...text.matchAll(/^\[(?:Info|Message)\s*:\s*BepInEx\]\s+Loading \[(.+?)\]\s*$/gm)].map((m) => m[1])
+    const loadedLines = [...text.matchAll(/^\[(?:Info|Message)\s*:\s*BepInEx\]\s+Loading \[(.+?)\]\s*$/gm)]
+    const loaded = loadedLines.map((m) => m[1])
     const errors = text
       .split(/\r?\n/)
       .filter((l) => /^\[(Error|Fatal)\s*:/.test(l))
       .slice(0, 20)
     const version = text.match(/BepInEx (\d+\.\d+\.\d+(?:\.\d+)?)/)?.[1]
-    return { ran: true, loader: version ? `BepInEx ${version}` : 'BepInEx', loaded, errors, logFile: file, at: st.mtimeMs }
+    // Per plugin, by its display name: "Loading [Name 1.2.3]" ran; "Could not load [Name 1.2.3] …" failed.
+    const files: RuntimeFileResult[] = loadedLines.map((m) => ({ file: m[1], byName: true, ok: true, evidence: [m[0].trim()] }))
+    for (const m of text.matchAll(/^\[(?:Error|Fatal|Warning)\s*:\s*BepInEx\].*?(?:Could not load|Skipping) \[(.+?)\].*$/gm)) {
+      const hit = files.find((f) => f.file === m[1])
+      if (hit) Object.assign(hit, { ok: false, evidence: [...hit.evidence, m[0].trim()] })
+      else files.push({ file: m[1], byName: true, ok: false, evidence: [m[0].trim()] })
+    }
+    return { ran: true, loader: version ? `BepInEx ${version}` : 'BepInEx', loaded, errors, files, logFile: file, at: st.mtimeMs }
   } catch {
     return { ran: false, loaded: [], errors: [], logFile: file }
   }

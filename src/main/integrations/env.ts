@@ -18,6 +18,7 @@ export function integrationEnv(): IntegrationEnv {
   if (env) return env
   env = {
     documents: app.getPath('documents'),
+    publicDocuments: join(process.env.PUBLIC ?? 'C:\\Users\\Public', 'Documents'),
     workDir: join(app.getPath('userData'), 'integrations'),
     steam: createSteamEnv(),
     log: scoped('integrations'),

@@ -11,8 +11,11 @@
 
 import type {
   DeployManifest,
+  DeployTarget,
+  DiagnosticFinding,
   Game,
   InstalledMod,
+  IntegrationCapabilities,
   IntegrationInfo,
   LaunchCheck,
   LaunchSpec,
@@ -62,6 +65,8 @@ export interface DownloadOptions {
 export interface IntegrationEnv {
   /** The user's Documents folder (where Terraria and others keep saves and mods). */
   documents: string
+  /** Public Documents (C:\Users\Public\Documents), where some Social Club emulators keep GTA V saves. */
+  publicDocuments?: string
   /** Folder for NexusForge's own work files (downloads, temporary extraction). */
   workDir: string
   steam: SteamEnv
@@ -175,6 +180,43 @@ export interface GameIntegration {
   /** Reads the loader's log after a launch. */
   checkLaunch?(game: Game, info: IntegrationInfo, since: number, env: IntegrationEnv): Promise<LaunchCheck>
   shortcut?(game: Game, info: IntegrationInfo, variant: 'vanilla' | 'modded', env: IntegrationEnv): Promise<ShortcutSpec | undefined>
+  /**
+   * Save-game packages (see mods/classify.ts): where each save file goes inside the 'saves' target that inspect()
+   * reported. Must never overwrite a save the user already has.
+   */
+  saveRoutes?(pkg: StagedPackage, saveFiles: string[], target: DeployTarget, game: Game): Promise<{ routes: ModRoute[]; checks: ModCheck[] }>
+  /** Game-specific diagnostic checks. Read-only: nothing may be changed here. */
+  diagnose?(ctx: DiagnoseContext): Promise<DiagnosticFinding[]>
+}
+
+export interface DiagnoseContext {
+  game: Game
+  info: IntegrationInfo
+  mods: InstalledMod[]
+  enabled: Set<string>
+  manifest?: DeployManifest
+  lastLaunch?: LaunchCheck
+  env: IntegrationEnv
+  state: IntegrationState
+}
+
+/** What an integration implements, read off the integration itself (so it can't claim more than it does). */
+export function capabilitiesOf(i: GameIntegration): IntegrationCapabilities {
+  const specific = i.id !== 'generic'
+  return {
+    detect: specific,
+    version: specific,
+    classify: specific,
+    loaders: i.loaders.length > 0,
+    configure: Boolean(i.configure),
+    verifyFiles: true,
+    verifyLoad: i.loadVerifiable,
+    runtimeLog: Boolean(i.checkLaunch),
+    launch: Boolean(i.launch),
+    saves: Boolean(i.saveRoutes),
+    diagnose: Boolean(i.diagnose),
+    uninstall: true
+  }
 }
 
 /** Deploy targets of an inspected game, for the engine. */

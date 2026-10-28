@@ -15,6 +15,7 @@ import * as accounts from './accounts/accounts'
 import * as detect from './mods/detect'
 import * as updates from './mods/updates'
 import * as setup from './integrations/orchestrator'
+import * as diagnostics from './diagnostics/diagnostics'
 import { forgetIntegration } from './integrations/registry'
 import { applyUiScale } from './window'
 
@@ -214,6 +215,15 @@ export function registerIpc(rendererUrl: string): void {
     setup.createShortcut(str(gameId, 'game'), variant === 'vanilla' ? 'vanilla' : 'modded', where === 'desktop' ? 'desktop' : 'startmenu')
   )
   handle('integration:shortcuts', (_e, gameId) => setup.listShortcuts(str(gameId, 'game')))
+
+  handle('diagnostics:run', (_e, gameId) => diagnostics.runDiagnostics(str(gameId, 'game')))
+  handle('diagnostics:fix', (_e, gameId, fixId, params) => {
+    // Only string parameters (mod id, loader id, folder) reach the repair; it checks each against the game.
+    const p: Record<string, string> = {}
+    if (params && typeof params === 'object') for (const [k, v] of Object.entries(params)) if (typeof v === 'string' && v.length < 1024) p[k] = v
+    return rescanAfter(str(gameId, 'game'), diagnostics.applyFix(gameId, str(fixId, 'repair'), p))
+  })
+  handle('diagnostics:export', (e, gameId) => diagnostics.exportDiagnostics(str(gameId, 'game'), win(e)))
 
   handle('sources:list', () => sources.listSources())
   handle('sources:search', (_e, id, q, gameId) => sources.searchSource(str(id, 'source'), String(q ?? ''), gameId || undefined))

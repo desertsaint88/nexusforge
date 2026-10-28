@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import { motion } from 'framer-motion'
-import { ArrowUp, ArrowUpCircle, Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, RefreshCw, Rocket, Square, Trash, Undo2, Zap } from 'lucide-react'
+import { ArrowUp, ArrowUpCircle, Compass, Ellipsis, FolderOpen, GripVertical, Link2, PackagePlus, Pencil, Power, PowerOff, Puzzle, RefreshCw, Rocket, Square, Trash, Undo2, Zap, PlayCircle } from 'lucide-react'
 import type { Game, InstalledMod, ModDeployState, ModKind } from '@shared/types'
 import { missingRequirements } from '@shared/deps'
 import { activeProfileOf, STAGE_LABEL, useMods } from '../../store/mods'
 import { useLibrary } from '../../store/library'
-import { confirm, useNav } from '../../store/ui'
+import { confirm, toast, useNav } from '../../store/ui'
 import { invoke } from '../../lib/api'
 import { cn, formatBytes, relativeTime } from '../../lib/format'
 import { Badge, Button, ProgressBar, SearchInput, Toggle } from '../../components/ui'
@@ -16,6 +16,7 @@ import { ModSettingsModal } from '../../modals/ModSettingsModal'
 import { DetectedMods } from './DetectedMods'
 import { SetupPanel } from './SetupPanel'
 import { DeployResult } from './DeployResult'
+import { RUNTIME_LABEL } from './DiagnoseTab'
 
 const SOURCE_LABEL: Record<string, string> = {
   nexus: 'Nexus',
@@ -36,7 +37,10 @@ const KIND_LABEL: Partial<Record<ModKind, string>> = {
   world: 'world',
   player: 'character',
   resourcepack: 'resource pack',
-  savegame: 'save game'
+  savegame: 'save game',
+  installer: 'setup program',
+  preset: 'preset',
+  'framework-mod': 'framework mod'
 }
 
 /** Where a mod stands, as a badge: in storage only, in the game, checked, or why it is not deployed. */
@@ -44,7 +48,7 @@ function StateBadge({ state, reason }: { state?: ModDeployState; reason?: string
   if (!state || state === 'disabled') return null
   const map: Record<Exclude<ModDeployState, 'disabled'>, { label: string; tone: 'success' | 'info' | 'warning' | 'danger' | 'neutral'; title: string }> = {
     verified: { label: 'verified', tone: 'success', title: 'In the game and checked after deployment.' },
-    deployed: { label: 'deployed', tone: 'info', title: 'In the game; NexusForge has no rules for this game to check that it loads.' },
+    deployed: { label: 'deployed', tone: 'info', title: 'In the game and every file checked; NexusForge cannot check from the files that the game loads it (see Diagnose after a start).' },
     prepared: { label: 'ready to deploy', tone: 'neutral', title: 'Downloaded and prepared in NexusForge storage; deploy to put it into the game.' },
     failed: { label: 'deploy failed', tone: 'danger', title: 'The last deployment failed; see the result above.' },
     rolled_back: { label: 'rolled back', tone: 'warning', title: 'The last deployment failed and was undone; see the result above.' },
@@ -370,6 +374,18 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                       }
                                     />
                                   )}
+                                  {on &&
+                                    (() => {
+                                      // What the loader's log of the last start says (only when it names this mod).
+                                      const r = status?.runtime?.[mod.id]
+                                      if (!r || r.state === 'unknown') return null
+                                      const l = RUNTIME_LABEL[r.state]
+                                      return (
+                                        <Badge tone={l.tone} className="h-4.5 shrink-0 text-[10px]">
+                                          <span title={[l.title, ...r.evidence].join('\n')}>{l.label}</span>
+                                        </Badge>
+                                      )
+                                    })()}
                                   {mod.kind && KIND_LABEL[mod.kind] && <Badge className="h-4.5 text-[10px]">{KIND_LABEL[mod.kind]}</Badge>}
                                   {mod.source && <Badge className="h-4.5 text-[10px]">{SOURCE_LABEL[mod.source.sourceId] ?? mod.source.sourceId.replace(/^(feed|plugin):/, '')}</Badge>}
                                   {mod.author && <span className="truncate">by {mod.author}</span>}
@@ -389,7 +405,12 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                   // The finding that matters most, in words (why it can't deploy, or a compatibility warning).
                                   const c = (mod.checks ?? []).find((x) => x.level === 'error') ?? (mod.checks ?? []).find((x) => x.level === 'warning')
                                   if (!c || !on) return null
-                                  return <div className={cn('mt-0.5 line-clamp-2 text-[11.5px] leading-snug', c.level === 'error' ? 'text-rose-200/85' : 'text-amber-200/80')}>{c.message}</div>
+                                  return (
+                                    <div className={cn('mt-0.5 line-clamp-3 text-[11.5px] leading-snug', c.level === 'error' ? 'text-rose-200/85' : 'text-amber-200/80')} title={c.userAction}>
+                                      {c.message}
+                                      {c.userAction ? <span className="text-ink-300"> Needs you: {c.userAction}</span> : null}
+                                    </div>
+                                  )
                                 })()}
                               </div>
                             </button>
@@ -422,6 +443,29 @@ export function ModsTab({ game, onShowConflicts }: { game: Game; onShowConflicts
                                   <MenuItem icon={<FolderOpen />} onClick={() => (close(), void invoke('mods:openFolder', game.id, mod.id))}>
                                     Open mod folder
                                   </MenuItem>
+                                  {mod.kind === 'installer' && (
+                                    <MenuItem
+                                      icon={<PlayCircle />}
+                                      onClick={async () => {
+                                        close()
+                                        if (
+                                          !(await confirm({
+                                            title: `Run ${mod.meta?.installer ?? 'the installer'}?`,
+                                            message: 'It is a program downloaded from the internet. Windows may ask for permission, and it makes its own changes, which NexusForge cannot undo. NexusForge never starts it by itself.',
+                                            confirmLabel: 'Run installer'
+                                          }))
+                                        )
+                                          return
+                                        try {
+                                          await invoke('diagnostics:fix', game.id, 'run-installer', { modId: mod.id })
+                                        } catch (err) {
+                                          toast.error('Could not start the installer', (err as Error).message)
+                                        }
+                                      }}
+                                    >
+                                      Run installer
+                                    </MenuItem>
+                                  )}
                                   {mod.source && SOURCE_LABEL[mod.source.sourceId] && (
                                     <MenuItem icon={<Compass />} onClick={() => (close(), void invoke('sources:openPage', mod.source!.sourceId, mod.source!.modId, game.id))}>
                                       Open mod page

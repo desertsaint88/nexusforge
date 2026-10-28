@@ -326,9 +326,9 @@ export const useMods = create<ModsState>((set, get) => {
         const report = await invoke('deploy:setup', gameId)
         set({ lastReport: { ...get().lastReport, [gameId]: report } })
         const skipped = report.notes.filter((n) => n.includes('was not deployed'))
-        if (report.outcome === 'verified') {
+        if (report.outcome === 'verified' || report.outcome === 'deployed') {
           if (skipped.length) toast.warning(report.title, skipped.join(' '))
-          else toast.success(report.verification?.loadVerified ? 'Deployed and verified' : 'Deployed', report.title)
+          else toast.success(report.outcome === 'verified' ? 'Deployed and verified' : 'Deployed (loading not confirmed)', report.title)
         } else if (report.outcome === 'nothing') {
           toast.info(report.title)
         }

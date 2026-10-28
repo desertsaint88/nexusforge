@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock, FolderOpen, Layers, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert, Wrench } from 'lucide-react'
+import { Clock, FolderOpen, Layers, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert, Wrench, Stethoscope } from 'lucide-react'
 import type { Game, LaunchOption } from '@shared/types'
 import { useLibrary } from '../store/library'
 import { activeProfileOf, useMods } from '../store/mods'
@@ -14,6 +14,7 @@ import { ModsTab } from './game/ModsTab'
 import { ConflictsTab } from './game/ConflictsTab'
 import { ProfilesTab } from './game/ProfilesTab'
 import { GameSettingsTab } from './game/GameSettingsTab'
+import { DiagnoseTab } from './game/DiagnoseTab'
 
 function Stat({ icon, label, value, tone }: { icon: ReactNode; label: string; value: ReactNode; tone?: 'ok' | 'warn' }) {
   return (
@@ -97,6 +98,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
   const status = state?.status
   const conflictCount = state?.conflicts?.totalFiles ?? 0
   const outside = detectedInfo?.mods.filter((m) => m.kind !== 'loader' && !m.managedModId).length ?? 0
+  const runtimeFailed = Object.values(status?.runtime ?? {}).filter((r) => r.state === 'failed').length
 
   return (
     <div className="relative h-full overflow-y-auto">
@@ -122,12 +124,13 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
               <Stat
                 icon={failed ? <CircleAlert /> : status?.deployed ? status.inSync ? <CircleCheck /> : <CircleAlert /> : <Rocket />}
                 label="Deployment"
-                tone={failed ? 'warn' : status?.deployed ? (status.inSync ? 'ok' : 'warn') : undefined}
+                tone={failed || runtimeFailed ? 'warn' : status?.deployed ? (status.inSync ? 'ok' : 'warn') : undefined}
                 value={
                   deploying ? 'Deploying…'
                   : !status ? '—'
                   : failed ? (status.last!.outcome === 'rolled_back' ? 'Last deploy rolled back' : 'Last deploy failed')
-                  : status.deployed ? (status.inSync ? `${status.fileCount.toLocaleString()} files ${verified ? 'verified' : 'live'}` : 'Out of date, redeploy')
+                  : runtimeFailed ? `${runtimeFailed} mod${runtimeFailed === 1 ? '' : 's'} failed in game`
+                  : status.deployed ? (status.inSync ? `${status.fileCount.toLocaleString()} files ${verified ? 'verified' : 'in place'}` : 'Out of date, redeploy')
                   : 'Not deployed'
                 }
               />
@@ -153,6 +156,12 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
               badge: conflictCount ? <Badge tone="warning">{conflictCount}</Badge> : undefined
             },
             { value: 'profiles', label: 'Profiles', icon: <Star />, badge: profile ? <span className="text-[11px] text-ink-400">{profile.name}</span> : undefined },
+            {
+              value: 'diagnose',
+              label: 'Diagnose',
+              icon: <Stethoscope />,
+              badge: runtimeFailed ? <Badge tone="danger">{runtimeFailed}</Badge> : undefined
+            },
             { value: 'settings', label: 'Settings', icon: <Settings /> }
           ]}
         />
@@ -163,6 +172,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
               {current === 'mods' && <ModsTab game={game} onShowConflicts={() => setCurrent('conflicts')} />}
               {current === 'conflicts' && <ConflictsTab game={game} />}
               {current === 'profiles' && <ProfilesTab game={game} />}
+              {current === 'diagnose' && <DiagnoseTab game={game} />}
               {current === 'settings' && <GameSettingsTab game={game} onRemoved={() => navigate({ name: 'library' })} />}
             </motion.div>
           </AnimatePresence>

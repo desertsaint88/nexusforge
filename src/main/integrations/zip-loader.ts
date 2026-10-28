@@ -33,6 +33,8 @@ export interface ZipLoaderContext {
   game: Game
   info?: IntegrationInfo
   rt: GameRuntime
+  /** What NexusForge remembers about the game (the last start's log, for loaders that pick a build from it). */
+  state?: IntegrationState
 }
 
 export interface ZipLoaderSpec {
@@ -203,9 +205,9 @@ export function zipLoader(spec: ZipLoaderSpec): LoaderAdapter & { spec: ZipLoade
     id: spec.id,
     name: spec.name,
     spec,
-    async status(game, info, env, _state: IntegrationState, mods): Promise<LoaderStatus> {
+    async status(game, info, env, state: IntegrationState, mods): Promise<LoaderStatus> {
       const rt = await gameRuntime(game)
-      const ctx = { game, info, rt }
+      const ctx = { game, info, rt, state }
       const dir = spec.targetDir(game, info)
       const managed = mods.find((m) => m.loaderId === spec.id)
       const required = mods.some((m) => loadersNeeded(m).includes(spec.id))
@@ -264,7 +266,7 @@ export function zipLoader(spec: ZipLoaderSpec): LoaderAdapter & { spec: ZipLoade
     },
     async install(game, info, env, host, report, signal) {
       const rt = await gameRuntime(game)
-      const ctx = { game, info, rt }
+      const ctx = { game, info, rt, state: host.state(game.id) }
       const blocked = await spec.unsupported?.(game, env, ctx)
       if (blocked) throw new Error(blocked)
       report(`Looking up the newest ${spec.name} release…`)

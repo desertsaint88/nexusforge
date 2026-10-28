@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { ResolvedDependency, Toast } from '@shared/types'
 
-export type GameTab = 'mods' | 'conflicts' | 'profiles' | 'settings'
+export type GameTab = 'mods' | 'conflicts' | 'profiles' | 'diagnose' | 'settings'
 export type SettingsSection = 'general' | 'library' | 'mods' | 'sources' | 'advanced'
 
 export type Route =

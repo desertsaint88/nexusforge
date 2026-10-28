@@ -6,6 +6,7 @@ import type {
   DeployProgress,
   DeployReport,
   DeployStatus,
+  DiagnosticReport,
   DownloadItem,
   DownloadRequest,
   FeedConfig,
@@ -112,6 +113,13 @@ export interface IpcInvokeMap {
   'integration:shortcut': (gameId: string, variant: 'vanilla' | 'modded', where: 'startmenu' | 'desktop') => ShortcutInfo
   'integration:shortcuts': (gameId: string) => ShortcutInfo[]
 
+  /** Read-only checks of a game's mod setup, with evidence and the repairs NexusForge can make. */
+  'diagnostics:run': (gameId: string) => DiagnosticReport
+  /** Runs one repair from a finding (after the user confirmed it), then checks again. */
+  'diagnostics:fix': (gameId: string, fixId: string, params?: Record<string, string>) => DiagnosticReport
+  /** Saves the report as Markdown (personal details removed); null when cancelled. */
+  'diagnostics:export': (gameId: string) => string | null
+
   'sources:list': () => SourceInfo[]
   'sources:search': (sourceId: string, query: string, gameId?: string) => ModSearchResult[]
   /** Search with a sort order; says when the order had to be approximated. */
@@ -193,6 +201,7 @@ export const INVOKE_CHANNELS = [
   'profiles:list', 'profiles:create', 'profiles:rename', 'profiles:delete', 'profiles:setActive', 'profiles:save',
   'deploy:run', 'deploy:setup', 'deploy:cancel', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
   'integration:inspect', 'integration:installLoader', 'integration:removeLoader', 'integration:operation', 'integration:lastLaunch', 'integration:shortcut', 'integration:shortcuts',
+  'diagnostics:run', 'diagnostics:fix', 'diagnostics:export',
   'sources:list', 'sources:search', 'sources:query', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
   'sources:setFeeds', 'sources:plugins', 'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
   'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:remove', 'downloads:clear',

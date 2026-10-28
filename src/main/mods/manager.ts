@@ -2,6 +2,7 @@ import { shell } from 'electron'
 import { promises as fsp } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
+import { outcomeOk } from '@shared/types'
 import type {
   ConflictReport,
   DeployOutcomeSummary,
@@ -11,6 +12,7 @@ import type {
   Game,
   InstalledMod,
   IntegrationInfo,
+  LaunchCheck,
   LinkCapabilities,
   ModDeployState,
   ModFileEntry,
@@ -32,10 +34,12 @@ import { probeLinks } from './links'
 import { activeProfile, addModToProfiles, deleteAllProfiles, listProfiles, saveProfile } from './profiles'
 import { integrationFor } from '../integrations/registry'
 import { integrationEnv, integrationState, saveIntegrationState } from '../integrations/env'
-import { engineTargets, type GameIntegration, type LoaderInstallHost, type StagedPackage } from '../integrations/types'
+import { capabilitiesOf, engineTargets, type GameIntegration, type LoaderInstallHost, type StagedPackage } from '../integrations/types'
 import { route, skipDocs } from '../integrations/common'
 import { looksLikeSave } from '../integrations/generic'
 import { loadersNeeded } from '../integrations/zip-loader'
+import { classifyPackage, SHARED_RULES_REVISION } from './classify'
+import { runtimeByMod } from './runtime'
 
 const log = scoped('mods')
 
@@ -98,6 +102,7 @@ export function inspectGame(gameId: string, fresh = false): Promise<GameContext>
     const env = integrationEnv()
     const integration = await integrationFor(game, env)
     const info = await integration.inspect(game, env, integrationState(gameId), listMods(gameId))
+    info.supports = capabilitiesOf(integration)
     return { game, integration, info }
   })()
   inspected.set(gameId, { at: Date.now(), ctx })
@@ -194,7 +199,8 @@ async function stagePackedMod(input: string, dest: string): Promise<void> {
   }
 }
 
-const layoutTag = (i: GameIntegration) => `${i.id}@${i.revision}`
+// The integration's rules revision plus the shared rules revision (mods/classify.ts): a change to either lays mods out again.
+const layoutTag = (i: GameIntegration) => `${i.id}@${i.revision}+${SHARED_RULES_REVISION}`
 
 export async function installMod(gameId: string, input: string, meta: InstallMeta = {}): Promise<InstalledMod> {
   const game = requireGame(gameId)
@@ -222,7 +228,7 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
     const files = await walkFiles(tmp)
     if (!files.length) throw new Error('The archive contains no files.')
     const pkg: StagedPackage = { dir: tmp, files, name: meta.name ?? guessed.name, archiveName: inputIsDir ? undefined : originalName(input), source: meta.source }
-    const cls = await ctx.integration.classify(pkg, game, ctx.info, integrationEnv())
+    const cls = await classifyPackage(pkg, { game, info: ctx.info, integration: ctx.integration, env: integrationEnv() })
 
     const name = meta.name ?? cls.name ?? guessed.name
     const version = meta.version ?? cls.version ?? guessed.version
@@ -300,14 +306,14 @@ async function ensureLayout(mod: InstalledMod, ctx: GameContext): Promise<Instal
     // put into the game folder (before 1.4 it was, where no game reads it).
     const files = await walkFiles(mod.stagingDir)
     const pkg: StagedPackage = { dir: mod.stagingDir, files, name: mod.name, archiveName: mod.originalFile, source: mod.source }
-    const cls = looksLikeSave(pkg, files.map((f) => f.rel)) ? await ctx.integration.classify(pkg, ctx.game, ctx.info, integrationEnv()) : undefined
+    const cls = looksLikeSave(pkg, files.map((f) => f.rel)) ? await classifyPackage(pkg, { game: ctx.game, info: ctx.info, integration: ctx.integration, env: integrationEnv() }) : undefined
     next = cls
       ? { ...mod, routes: cls.routes, kind: cls.kind, skipped: cls.skipped, checks: cls.checks, layoutBy: want }
       : { ...mod, routes: [route(mod.rootPath, 'game')], skipped: skipDocs(files, mod.rootPath), layoutBy: want }
   } else {
     const files = await walkFiles(mod.stagingDir)
     const pkg: StagedPackage = { dir: mod.stagingDir, files, name: mod.name, archiveName: mod.originalFile, source: mod.source }
-    const cls = await ctx.integration.classify(pkg, ctx.game, ctx.info, integrationEnv())
+    const cls = await classifyPackage(pkg, { game: ctx.game, info: ctx.info, integration: ctx.integration, env: integrationEnv() })
     next = {
       ...mod,
       routes: cls.routes,
@@ -327,6 +333,16 @@ async function ensureLayout(mod: InstalledMod, ctx: GameContext): Promise<Instal
   next.sizeBytes = deployable.reduce((a, f) => a + f.size, 0)
   saveMod(next)
   log.info(`re-laid out ${mod.name} with ${want}: ${(next.routes ?? []).map((r) => `${r.from || '.'} -> ${r.target}:${r.to || '.'}`).join(', ')}`)
+  return next
+}
+
+/** Classifies a mod again with the current rules (also one laid out by hand), e.g. after its save folder was found. */
+export async function relayoutMod(gameId: string, modId: string): Promise<InstalledMod> {
+  const mod = requireMod(gameId, modId)
+  const ctx = await inspectGame(gameId, true)
+  const next = await ensureLayout({ ...mod, layoutBy: 'stale' }, ctx)
+  forgetInspection(gameId)
+  emit('mods:changed', { gameId })
   return next
 }
 
@@ -369,7 +385,7 @@ export async function removeMod(gameId: string, modId: string): Promise<void> {
   const manifest = await readManifest(paths.deployManifest(gameId))
   if (manifest?.entries.some((e) => e.modId === modId)) {
     const report = await deployGame(gameId)
-    if (report.outcome !== 'verified' && report.outcome !== 'nothing') {
+    if (!outcomeOk(report.outcome)) {
       // The game still has its files: keep the record so nothing is orphaned, and say why.
       saveMod(mod)
       for (const p of profiles) await saveProfile({ ...p, order: [...p.order, mod.id] })
@@ -573,9 +589,9 @@ export function deployGame(gameId: string): Promise<DeployReport> {
       report.notes.push(`${m?.name ?? id} was not deployed: ${why.reason}`)
     }
     const summary = summarize(report)
-    if (excluded.size && report.outcome === 'verified') summary.failedMods = [...excluded.keys()]
+    if (excluded.size && (report.outcome === 'verified' || report.outcome === 'deployed')) summary.failedMods = [...excluded.keys()]
     db().set('deployOutcomes', { ...(db().get('deployOutcomes') ?? {}), [gameId]: summary })
-    if (report.outcome === 'verified' || report.outcome === 'nothing') await cleanupRetired(gameId).catch(() => {})
+    if (outcomeOk(report.outcome)) await cleanupRetired(gameId).catch(() => {})
     forgetInspection(gameId)
     return report
   })
@@ -644,6 +660,7 @@ export async function deployStatus(gameId: string): Promise<DeployStatus> {
       perMod[id] = wanted.has(id) ? 'prepared' : 'deployed'
     }
   }
+  const check = await launchEvidence(gameId, ctx).catch(() => undefined)
   return {
     gameId,
     deployed,
@@ -655,8 +672,30 @@ export async function deployStatus(gameId: string): Promise<DeployStatus> {
     targets: ctx.info.targets,
     last,
     perMod,
+    runtime: runtimeByMod(manifest, listMods(gameId), check),
     interrupted: await hasInterruptedDeployment(paths.deployManifest(gameId))
   }
+}
+
+const evidenceRead = new Map<string, number>()
+
+/**
+ * The mod loader's log of the game's last start, however it was started (NexusForge, Steam, a shortcut). Read
+ * at most every 20 s per game; the newest result is remembered.
+ */
+export async function launchEvidence(gameId: string, ctx?: GameContext, force = false): Promise<LaunchCheck | undefined> {
+  const state = integrationState(gameId)
+  const c = ctx ?? (await inspectGame(gameId))
+  if (!c.integration.checkLaunch) return state.lastLaunch
+  if (!force && Date.now() - (evidenceRead.get(gameId) ?? 0) < 20_000) return state.lastLaunch
+  evidenceRead.set(gameId, Date.now())
+  const fresh = await c.integration.checkLaunch(c.game, c.info, 0, integrationEnv())
+  const stored = state.lastLaunch
+  if (fresh.ran && (!stored || (fresh.at ?? 0) >= (stored.at ?? 0))) {
+    saveIntegrationState(gameId, { ...integrationState(gameId), lastLaunch: fresh })
+    return fresh
+  }
+  return stored
 }
 
 export async function probeGame(gameId: string): Promise<LinkCapabilities> {

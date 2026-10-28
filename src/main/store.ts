@@ -62,7 +62,8 @@ function defaultSettings(): StoredSettings {
     sources: {},
     feeds: [],
     trustedPlugins: {},
-    firstRunComplete: false
+    firstRunComplete: false,
+    checkUpdatesOnStartup: true
   }
 }
 

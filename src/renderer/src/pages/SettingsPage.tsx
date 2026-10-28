@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ExternalLink, FolderOpen, FolderPlus, Gamepad2, HardDrive, KeyRound, Link2, LogIn, Monitor, Palette, Plug, Plus, RefreshCw, Rss, ScrollText, ShieldAlert, ShieldCheck, Trash, Wand2, Info } from 'lucide-react'
+import { Bug, CircleArrowUp, ExternalLink, FolderOpen, FolderPlus, Gamepad2, HardDrive, KeyRound, Link2, LogIn, Monitor, Palette, Plug, Plus, RefreshCw, Rss, ScrollText, ShieldAlert, ShieldCheck, Trash, Wand2, Info } from 'lucide-react'
+import { reportBug, useBugReport, useUpdater } from '../store/bugreport'
+import { startUpdate } from '../lib/update'
 import { accountForSource, useAccounts } from '../store/accounts'
 import type { AccentName, DeployStrategy, FeedConfig, PluginInfo, Settings, SourceInfo } from '@shared/types'
 import { invoke } from '../lib/api'
@@ -8,7 +10,7 @@ import { cn } from '../lib/format'
 import { useApp } from '../store/app'
 import { useLibrary } from '../store/library'
 import { toast, useNav, type SettingsSection } from '../store/ui'
-import { Badge, Button, Card, Field, Input, Segmented, Toggle } from '../components/ui'
+import { Badge, Button, Card, Field, Input, ProgressBar, Segmented, Toggle } from '../components/ui'
 import { Logo } from '../components/Chrome'
 
 // Same muted tones as styles.css.
@@ -512,6 +514,37 @@ function Advanced({ s, update }: { s: Settings; update(p: Partial<Settings>): vo
           </Button>
         </Row>
       </Panel>
+    </div>
+  )
+}
+
+const MB = (n?: number) => `${((n ?? 0) / 1024 / 1024).toFixed(1)} MB`
+
+function About({ s, update }: { s: Settings; update(p: Partial<Settings>): void }) {
+  const info = useApp((x) => x.info)
+  const status = useUpdater((x) => x.status)
+  const check = useUpdater((x) => x.check)
+  const report = useBugReport((x) => x.state)
+  const [checking, setChecking] = useState(false)
+  const runCheck = async () => {
+    setChecking(true)
+    try {
+      await check()
+    } catch (err) {
+      toast.error('Could not check for updates', (err as Error).message)
+    } finally {
+      setChecking(false)
+    }
+  }
+  const phase = status?.phase ?? 'idle'
+  const modeText =
+    status?.mode === 'auto'
+      ? 'Installed copy: updates download and install inside NexusForge, then it restarts. Your library, mods and settings stay.'
+      : status?.mode === 'installer'
+        ? 'This copy runs from a folder, not from an installation: an update downloads the installer and starts it. After that, updates install inside the app.'
+        : 'Development run: updates are only checked.'
+  return (
+    <div className="space-y-4">
       <Panel title="About" icon={<Info />}>
         <div className="flex items-center gap-4 py-3">
           <Logo size={48} />
@@ -526,6 +559,102 @@ function Advanced({ s, update }: { s: Settings; update(p: Partial<Settings>): vo
             </div>
           </div>
         </div>
+        <Row title="Source code and releases" description={<span className="font-mono">{report?.repoUrl}</span>}>
+          <Button size="sm" icon={<ExternalLink className="size-3.5" />} onClick={() => report && void invoke('app:openExternal', report.repoUrl)}>
+            GitHub
+          </Button>
+        </Row>
+      </Panel>
+
+      <Panel
+        title="Updates"
+        icon={<CircleArrowUp />}
+        right={
+          <Button size="sm" icon={<RefreshCw className={cn('size-3.5', (checking || phase === 'checking') && 'animate-spin')} />} disabled={checking || phase === 'checking' || phase === 'downloading' || phase === 'installing'} onClick={() => void runCheck()}>
+            Check now
+          </Button>
+        }
+      >
+        <div className="border-b border-white/[0.05] py-4">
+          {phase === 'available' && status?.version && (
+            <div className="flex items-start gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13.5px] font-semibold text-ink-100">
+                  NexusForge {status.version} is available <Badge tone="accent" className="ml-1">new</Badge>
+                </div>
+                {status.releaseDate && <div className="text-[12px] text-ink-400">Released {new Date(status.releaseDate).toLocaleDateString()}</div>}
+                {status.notes && <pre className="selectable mt-2 max-h-48 overflow-auto rounded-xl bg-black/30 p-3 font-sans text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-300">{status.notes}</pre>}
+              </div>
+              <Button variant="primary" size="sm" icon={<CircleArrowUp className="size-3.5" />} onClick={() => void startUpdate()}>
+                Update now
+              </Button>
+            </div>
+          )}
+          {phase === 'downloading' && (
+            <div>
+              <div className="mb-2 flex justify-between text-[13px] text-ink-200">
+                <span>Downloading NexusForge {status?.version}…</span>
+                <span className="text-ink-400 tabular-nums">
+                  {Math.round(status?.percent ?? 0)}% · {MB(status?.transferred)} of {MB(status?.total)}
+                  {status?.bytesPerSecond ? ` · ${MB(status.bytesPerSecond)}/s` : ''}
+                </span>
+              </div>
+              <ProgressBar value={(status?.percent ?? 0) / 100} />
+            </div>
+          )}
+          {phase === 'installing' && <div className="text-[13px] text-ink-200">Installing NexusForge {status?.version}. NexusForge closes and starts again by itself…</div>}
+          {phase === 'none' && <div className="text-[13px] text-ink-200">NexusForge is up to date.{status?.checkedAt ? <span className="text-ink-400"> Checked {new Date(status.checkedAt).toLocaleTimeString()}.</span> : null}</div>}
+          {phase === 'checking' && <div className="text-[13px] text-ink-300">Looking for a new version on GitHub…</div>}
+          {phase === 'idle' && <div className="text-[13px] text-ink-300">Not checked yet.</div>}
+          {phase === 'error' && (
+            <div className="flex items-start gap-4">
+              <div className="min-w-0 flex-1 text-[13px] text-rose-300">
+                {status?.version ? `The update to ${status.version} failed: ` : 'The update check failed: '}
+                <span className="selectable">{status?.error}</span>
+              </div>
+              {status?.version && (
+                <Button size="sm" icon={<RefreshCw className="size-3.5" />} onClick={() => void startUpdate()}>
+                  Try again
+                </Button>
+              )}
+            </div>
+          )}
+          <div className="mt-2 text-[12px] leading-relaxed text-ink-400">{modeText}</div>
+        </div>
+        <Row title="Check for updates when NexusForge starts" description="Also every few hours while it runs. Nothing is downloaded until you click Update.">
+          <Toggle checked={s.checkUpdatesOnStartup} onChange={(v) => update({ checkUpdatesOnStartup: v })} />
+        </Row>
+      </Panel>
+
+      <Panel
+        title="Bug reports"
+        icon={<Bug />}
+        right={
+          <Button variant="primary" size="sm" icon={<Bug className="size-3.5" />} onClick={() => reportBug({ origin: 'settings' })}>
+            Report a bug
+          </Button>
+        }
+      >
+        <Row
+          title="Errors in this session"
+          description={report?.recentErrors.length ? `Last: ${report.recentErrors.at(-1)!.message.slice(0, 160)}` : 'None recorded. Errors from every part of NexusForge are collected here for reports.'}
+        >
+          <Badge tone={report?.recentErrors.length ? 'warning' : 'neutral'}>{report?.recentErrors.length ?? 0}</Badge>
+        </Row>
+        <Row title="GitHub in NexusForge" description={report?.githubSignedIn ? `Signed in${report.githubUser ? ` as ${report.githubUser}` : ''}: reports open ready to send.` : 'Sign in once and bug reports open ready to send inside NexusForge.'}>
+          {report?.githubSignedIn ? (
+            <Badge tone="success">Signed in</Badge>
+          ) : (
+            <Button size="sm" icon={<LogIn className="size-3.5" />} onClick={() => void invoke('bugreport:githubSignIn')}>
+              Sign in
+            </Button>
+          )}
+        </Row>
+        <Row title="Saved reports" description={<span className="font-mono">{report?.reportsDir}</span>}>
+          <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => void invoke('bugreport:openFolder')}>
+            Open
+          </Button>
+        </Row>
       </Panel>
     </div>
   )
@@ -543,7 +672,8 @@ export function SettingsPage({ section }: { section?: SettingsSection }) {
     { value: 'library', label: 'Library', icon: <Gamepad2 /> },
     { value: 'mods', label: 'Mods', icon: <HardDrive /> },
     { value: 'sources', label: 'Sources & plugins', icon: <Plug /> },
-    { value: 'advanced', label: 'Advanced', icon: <ScrollText /> }
+    { value: 'advanced', label: 'Advanced', icon: <ScrollText /> },
+    { value: 'about', label: 'About & updates', icon: <Info /> }
   ]
   const apply = (p: Partial<Settings>) => void update(p)
   return (
@@ -573,6 +703,7 @@ export function SettingsPage({ section }: { section?: SettingsSection }) {
               {current === 'mods' && <ModsSettings s={s} update={apply} />}
               {current === 'sources' && <SourcesSettings s={s} update={apply} />}
               {current === 'advanced' && <Advanced s={s} update={apply} />}
+              {current === 'about' && <About s={s} update={apply} />}
             </motion.div>
           </AnimatePresence>
         </div>

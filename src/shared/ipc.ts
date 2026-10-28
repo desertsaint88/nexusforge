@@ -6,6 +6,11 @@ import type {
   DeployProgress,
   DeployReport,
   DeployStatus,
+  AppUpdateStatus,
+  BugReportInput,
+  BugReportPreview,
+  BugReportResult,
+  BugReportState,
   DiagnosticReport,
   DownloadItem,
   DownloadRequest,
@@ -120,6 +125,28 @@ export interface IpcInvokeMap {
   /** Saves the report as Markdown (personal details removed); null when cancelled. */
   'diagnostics:export': (gameId: string) => string | null
 
+  /** Recent errors, last session's crash, GitHub sign-in state. */
+  'bugreport:state': () => BugReportState
+  /** Takes a picture of the window before the report dialog opens (saved with the report if the user wants). */
+  'bugreport:capture': () => boolean
+  /** The issue text as it would be sent (redacted). */
+  'bugreport:preview': (input: BugReportInput) => BugReportPreview
+  /** Saves the full report; 'panel' / 'browser' also open GitHub's new-issue form with it filled in. */
+  'bugreport:submit': (input: BugReportInput, target: 'panel' | 'browser' | 'save') => BugReportResult
+  /** An error in the renderer (window.onerror, unhandled rejection, a crashed page). */
+  'bugreport:rendererError': (error: { message: string; detail?: string; page?: string }) => void
+  'bugreport:openFolder': (dir?: string) => void
+  /** The user saw (and reported or dismissed) last session's crash. */
+  'bugreport:dismissCrash': () => void
+  /** Sign in to github.com inside NexusForge (for the issue form). */
+  'bugreport:githubSignIn': () => void
+
+  'updater:state': () => AppUpdateStatus
+  /** Looks for a newer release on GitHub now. */
+  'updater:check': () => AppUpdateStatus
+  /** Downloads the new version and installs it (the app restarts). */
+  'updater:install': () => void
+
   'sources:list': () => SourceInfo[]
   'sources:search': (sourceId: string, query: string, gameId?: string) => ModSearchResult[]
   /** Search with a sort order; says when the order had to be approximated. */
@@ -183,6 +210,9 @@ export interface IpcEventMap {
   /** Progress of a Steam sign-in ("Confirm the sign-in in the Steam app…"). */
   'accounts:steamStatus': string
   'toast': Omit<Toast, 'id'>
+  'updater:state': AppUpdateStatus
+  /** An error was recorded (for the report button's counter). */
+  'bugreport:changed': BugReportState
   /** Settings changed outside the renderer (Ctrl + mouse wheel interface size). */
   'settings:changed': Settings
 }
@@ -202,6 +232,8 @@ export const INVOKE_CHANNELS = [
   'deploy:run', 'deploy:setup', 'deploy:cancel', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
   'integration:inspect', 'integration:installLoader', 'integration:removeLoader', 'integration:operation', 'integration:lastLaunch', 'integration:shortcut', 'integration:shortcuts',
   'diagnostics:run', 'diagnostics:fix', 'diagnostics:export',
+  'bugreport:state', 'bugreport:capture', 'bugreport:preview', 'bugreport:submit', 'bugreport:rendererError', 'bugreport:openFolder', 'bugreport:dismissCrash', 'bugreport:githubSignIn',
+  'updater:state', 'updater:check', 'updater:install',
   'sources:list', 'sources:search', 'sources:query', 'sources:details', 'sources:bindings', 'sources:dependencies', 'sources:latestVersion', 'sources:openPage',
   'sources:setFeeds', 'sources:plugins', 'sources:trustPlugin', 'sources:reload', 'sources:openPluginsFolder',
   'downloads:list', 'downloads:start', 'downloads:cancel', 'downloads:focus', 'downloads:retry', 'downloads:install', 'downloads:remove', 'downloads:clear',
@@ -211,7 +243,7 @@ export const INVOKE_CHANNELS = [
 
 export const EVENT_CHANNELS = [
   'window:maximized', 'library:changed', 'library:running', 'scan:progress', 'deploy:progress', 'setup:progress', 'integration:launch', 'mods:changed', 'mods:detected', 'downloads:update', 'sitepanel:state',
-  'accounts:changed', 'accounts:steamStatus', 'toast', 'settings:changed'
+  'accounts:changed', 'accounts:steamStatus', 'toast', 'settings:changed', 'updater:state', 'bugreport:changed'
 ] as const satisfies readonly EventChannel[]
 
 type Async<F> = F extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : never

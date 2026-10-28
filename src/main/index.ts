@@ -10,6 +10,12 @@ import { isEngineBuildString } from './library/exe-version'
 import { rescanGames } from './mods/detect'
 import { clearCloudflareCookies } from './web/browser'
 import { NEXUS_PARTITION } from './sources/nexus'
+import { join } from 'node:path'
+import { installErrorCapture } from './bugreport/errors'
+import { lastSessionCrash, startSession } from './bugreport/session'
+import { initBugReports } from './bugreport/bugreport'
+import { readTail } from './bugreport/report'
+import { startUpdateChecks } from './updater/updater'
 
 /**
  * Work done after the window is up: one-time upgrade steps, then (unless turned off) a scan for new games
@@ -52,8 +58,14 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
+    // The end of the log before this session writes to it: last session's errors, if it crashed.
+    const previousLog = await readTail(join(app.getPath('userData'), 'logs', 'main.log'), 300)
     initLogger()
     setLogLevel(getSettings().logLevel)
+    installErrorCapture()
+    startSession(previousLog)
+    initBugReports()
+    if (lastSessionCrash()) logger.warn(`the previous session (${lastSessionCrash()!.version}) did not close properly`)
     handleMediaProtocol()
 
     // The renderer never needs camera, notifications, geolocation, etc.
@@ -103,6 +115,8 @@ if (!app.requestSingleInstanceLock()) {
     createMainWindow()
     // Let the window paint first; the scans run in the background and report through events.
     setTimeout(() => void startupWork(), 1500)
+    // A newer release on GitHub? (Shortly after start, then every few hours.)
+    if (!process.env.NEXUSFORGE_NO_UPDATE_CHECK) startUpdateChecks(() => getSettings().checkUpdatesOnStartup)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

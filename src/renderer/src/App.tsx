@@ -5,7 +5,12 @@ import { subscribeAppSettings, useApp } from './store/app'
 import { subscribeLibrary, useLibrary } from './store/library'
 import { subscribeMods } from './store/mods'
 import { subscribeDownloads, useDownloads } from './store/downloads'
-import { useNav, useToasts } from './store/ui'
+import { useNav, useToasts, type Route } from './store/ui'
+import { describeRoute, subscribeBugReports, useBugReport } from './store/bugreport'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { BugReportDialog } from './components/BugReportDialog'
+
+let crashOffered = false
 import { Sidebar, TitleBar, Toasts } from './components/Chrome'
 import { ConfirmHost } from './components/Modal'
 import { DependencyDialogHost } from './components/DependencyDialog'
@@ -24,6 +29,14 @@ import { Onboarding } from './pages/Onboarding'
 function Page() {
   const route = useNav((s) => s.route)
   const key = route.name === 'game' ? `game:${route.gameId}` : route.name
+  return (
+    <ErrorBoundary area={describeRoute(route).page} resetKey={JSON.stringify(route)}>
+      <PageInner route={route} pageKey={key} />
+    </ErrorBoundary>
+  )
+}
+
+function PageInner({ route, pageKey: key }: { route: Route; pageKey: string }) {
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -55,13 +68,30 @@ export function App() {
     subscribeDownloads()
     subscribeAccounts()
     const offSettings = subscribeAppSettings()
+    const offReports = subscribeBugReports()
     const off = on('toast', (t) => useToasts.getState().push(t))
     void Promise.all([useApp.getState().load(), useLibrary.getState().load(), useDownloads.getState().load(), useAccounts.getState().load()]).finally(() => setReady(true))
     return () => {
       off()
       offSettings()
+      offReports()
     }
   }, [])
+
+  // NexusForge did not close properly last time: offer a report (once).
+  const crash = useBugReport((s) => s.state?.lastSessionCrash)
+  useEffect(() => {
+    if (!ready || !crash || crashOffered) return
+    crashOffered = true
+    useToasts.getState().push({
+      kind: 'warning',
+      title: 'NexusForge did not close properly last time',
+      message: `Version ${crash.version}, last seen ${new Date(crash.lastSeen).toLocaleString()}. If it crashed, a report helps fix it.`,
+      sticky: true,
+      // The report's "Last session" section carries the time and the last errors.
+      action: { id: 'report', label: 'Report it', report: { title: 'NexusForge closed unexpectedly', origin: 'crash', description: 'NexusForge closed by itself (or froze and had to be closed). What were you doing?\n' } }
+    })
+  }, [ready, crash])
 
   return (
     <MotionConfig reducedMotion={settings?.reduceMotion ? 'always' : 'never'}>
@@ -80,6 +110,7 @@ export function App() {
         <ConfirmHost />
         <DependencyDialogHost />
         <AccountPromptHost />
+        <BugReportDialog />
       </div>
     </MotionConfig>
   )

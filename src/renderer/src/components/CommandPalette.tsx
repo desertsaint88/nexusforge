@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Compass, CornerDownLeft, Download, Library, RefreshCw, Search, Settings, UserRound } from 'lucide-react'
+import { Bug, CircleArrowUp, Compass, CornerDownLeft, Download, Library, RefreshCw, Search, Settings, UserRound } from 'lucide-react'
+import { reportBug } from '../store/bugreport'
 import { create } from 'zustand'
 import { useLibrary, visibleGames } from '../store/library'
 import { useNav, type Route } from '../store/ui'
@@ -81,7 +82,9 @@ export function CommandPalette() {
       { id: 'p:accounts', label: 'Accounts', icon: <UserRound />, run: go({ name: 'accounts' }), hint: 'Page', keywords: 'sign in login nexus steam' },
       { id: 'p:settings', label: 'Settings', icon: <Settings />, run: go({ name: 'settings' }), hint: 'Page', keywords: 'interface size accent' },
       { id: 'p:sources', label: 'Settings: Sources & plugins', icon: <Settings />, run: go({ name: 'settings', section: 'sources' }), hint: 'Page', keywords: 'api key' },
-      { id: 'a:rescan', label: 'Rescan library', icon: <RefreshCw />, run: () => void scan(), hint: 'Action', keywords: 'scan games find' }
+      { id: 'a:rescan', label: 'Rescan library', icon: <RefreshCw />, run: () => void scan(), hint: 'Action', keywords: 'scan games find' },
+      { id: 'a:report', label: 'Report a bug', icon: <Bug />, run: () => reportBug({ origin: 'palette' }), hint: 'Action', keywords: 'bug issue problem crash error feedback github' },
+      { id: 'a:update', label: 'Check for updates', icon: <CircleArrowUp />, run: go({ name: 'settings', section: 'about' }), hint: 'Action', keywords: 'update version upgrade release about' }
     ]
     const recentFirst = [...games].sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0) || a.name.localeCompare(b.name))
     const gameItems: Item[] = recentFirst.map((g) => ({

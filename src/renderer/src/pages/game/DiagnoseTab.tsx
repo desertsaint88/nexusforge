@@ -3,7 +3,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, CircleCheck, CircleX, Download, Info, RefreshCw, Stethoscope, TriangleAlert, Wrench } from 'lucide-react'
+import { Bug, ChevronDown, CircleCheck, CircleX, Download, Info, RefreshCw, Stethoscope, TriangleAlert, Wrench } from 'lucide-react'
+import { reportBug } from '../../store/bugreport'
 import type { DiagnosticFinding, DiagnosticFix, DiagnosticReport, Game, IntegrationCapabilities, ModRuntime } from '@shared/types'
 import { invoke } from '../../lib/api'
 import { cn, relativeTime } from '../../lib/format'
@@ -156,6 +157,15 @@ export function DiagnoseTab({ game }: { game: Game }) {
         </Button>
         <Button size="sm" variant="outline" icon={<Download className="size-3.5" />} onClick={() => void exportReport()}>
           Export report
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          icon={<Bug className="size-3.5" />}
+          title="Report a bug in NexusForge with these results attached"
+          onClick={() => reportBug({ title: `${report.gameName}: `, origin: 'diagnose', gameId: report.gameId })}
+        >
+          Report a bug
         </Button>
       </div>
 

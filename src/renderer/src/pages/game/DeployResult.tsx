@@ -3,7 +3,8 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, CircleCheck, CircleX, FileText, Info, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Bug, ChevronDown, CircleCheck, CircleX, FileText, Info, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { reportBug } from '../../store/bugreport'
 import type { DeployOutcomeSummary, DeployReport, VerifyCheck } from '@shared/types'
 import { invoke } from '../../lib/api'
 import { cn, relativeTime } from '../../lib/format'
@@ -152,6 +153,22 @@ export function DeployResult({ report, last, onDismiss }: { report?: DeployRepor
           {!success && outcome !== 'nothing' && (
             <Button size="sm" variant="ghost" icon={<FileText className="size-3.5" />} onClick={() => void invoke('app:openLogs')}>
               Log
+            </Button>
+          )}
+          {!success && outcome !== 'nothing' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Bug className="size-3.5" />}
+              onClick={() =>
+                reportBug({
+                  title: `Deployment ${o.label.toLowerCase()}: ${problem?.title ?? report?.title ?? last?.title ?? ''}`.slice(0, 140),
+                  origin: 'deploy',
+                  error: { message: problem?.detail ?? report?.title ?? last?.title ?? 'Deployment failed', detail: [...(problem?.advice ?? []), ...(problem?.paths ?? []).slice(0, 5), ...(report?.errors ?? [])].join('\n') || undefined }
+                })
+              }
+            >
+              Report
             </Button>
           )}
           {onDismiss && report && (

@@ -18,13 +18,21 @@ win:
   target:
     - target: nsis
       arch: [x64]
-    - target: portable
-      arch: [x64]
+# Assisted installer (pick the folder); updates run it silently from inside the app.
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  createDesktopShortcut: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NexusForge
+  runAfterFinish: true
+  # Library, mods, profiles and settings in %APPDATA%\NexusForge survive uninstalls and updates.
+  deleteAppDataOnUninstall: false
   artifactName: ${productName}-Setup-${version}.${ext}
-portable:
-  artifactName: ${productName}-${version}-portable.${ext}
+# Releases on GitHub: the installer, its blockmap (differential updates) and latest.yml (version + SHA-512).
+publish:
+  provider: github
+  owner: desertsaint88
+  repo: nexusforge
+  releaseType: release

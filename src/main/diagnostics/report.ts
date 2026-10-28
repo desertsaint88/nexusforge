@@ -12,10 +12,10 @@ export interface RedactOptions {
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 export function redact(text: string, o: RedactOptions): string {
-  let t = text
+  // E-mail addresses first: one containing the user name would otherwise keep its domain.
+  let t = text.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<e-mail>')
   if (o.home) t = t.replace(new RegExp(esc(o.home), 'gi'), '%USERPROFILE%').replace(new RegExp(esc(o.home.replace(/\\/g, '/')), 'gi'), '%USERPROFILE%')
   if (o.user && o.user.length >= 3) t = t.replace(new RegExp(`(?<![A-Za-z0-9])${esc(o.user)}(?![A-Za-z0-9])`, 'gi'), '<user>')
-  t = t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<e-mail>')
   // Long opaque tokens (API keys, session ids): 32+ characters mixing upper case, lower case and digits. Lower-case
   // hex (checksums) and paths stay readable.
   t = t.replace(/(?<![A-Za-z0-9\\/._-])[A-Za-z0-9+=_-]{32,}(?![A-Za-z0-9\\/._-])/g, (m) => (/[A-Z]/.test(m) && /[a-z]/.test(m) && /\d/.test(m) ? '<redacted>' : m))

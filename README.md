@@ -2,6 +2,14 @@
 
 Universal game mod manager & launcher for Windows. Electron 45 · Vite 8 · React 19 · TypeScript · Tailwind CSS 4 · Framer Motion · Zustand.
 
+## Install
+
+Download `NexusForge-Setup-<version>.exe` from [Releases](https://github.com/desertsaint88/nexusforge/releases/latest) and run it. The installer is not code-signed, so Windows SmartScreen may say "Windows protected your PC": click **More info › Run anyway**. NexusForge installs for your user (no admin rights needed) and keeps its data in `%APPDATA%\NexusForge`.
+
+**Updates** install inside the app: NexusForge checks this repository's releases when it starts (and every few hours). **Update now** downloads the new version with progress (differential when possible, SHA-512 checked), installs it silently, and restarts. Your library, mods, profiles and settings stay. Settings › About & updates shows the state and can turn the check off.
+
+**Bug reports**: the bug button in the title bar, the **Report** button on every error message, the Diagnose tab, failed deployments and the crash screen open a report with system info, recent errors, the end of the log and the game's Diagnose results. Your user folder, user name, e-mail addresses and keys are taken out, and you see the text before anything is sent. It opens as a new issue in this repository, inside NexusForge (sign in to GitHub once) or in your browser; a full copy is saved in `%APPDATA%\NexusForge\bug-reports`. If NexusForge did not close properly, it offers a report at the next start.
+
 ## Features
 
 **Library & launcher**
@@ -71,8 +79,12 @@ node scripts/smoke-1.2.mjs       # artwork, installed-mod detection, sorting, lo
 node scripts/smoke-cloudflare.mjs  # Nexus login/registration pass Cloudflare inside the app (no automation driver)
 npx vitest run --config scripts/live/vitest.live.config.ts   # live checks: real loader downloads, real starts of a copied game, this PC's library (read-only)
 node scripts/probe-diagnostics.mjs   # Diagnose on a copy of the real data file (game folders only read), reports in .smoke/diagnostics
-npm run dist         # NSIS installer + portable exe in release/
+node scripts/probe-bugreport.mjs     # bug reports end to end (crash prompt, preview, saved report, GitHub form) + update check
+npm run dist         # NSIS installer in release/ (not published)
+npm run release      # build + publish a GitHub release (needs GH_TOKEN); raise "version" in package.json first
 ```
+
+A release holds the installer, its `.blockmap` (differential updates) and `latest.yml` (version, SHA-512); installed copies read `latest.yml` to update.
 
 `npm run smoke` uses a throwaway data folder and a fake game under `.smoke/`; it never deploys into real games.
 Set `NEXUSFORGE_SMOKE_FOLDERS="C:\Games;E:\Games"` to also scan those folders (read-only).
@@ -86,6 +98,8 @@ src/main        Electron main process
   mods/         archive install, layout detection, shared package strategies (classify.ts), runtime evidence
                 (runtime.ts), plan/conflicts, deploy engine, profiles
   diagnostics/  read-only checks (core.ts), confirmed repairs, report export with redaction
+  bugreport/    error capture (logger hook, crashes), session marker, report text + GitHub issue form
+  updater/      update checks and in-app installs from GitHub releases (electron-updater)
   integrations/ per-game and per-engine integrations, mod loaders (zip-loader.ts), proxy DLL checks, one-click setup
   sources/      adapter interface, Nexus/Thunderstore/Modrinth, feeds, plugin loader
   downloads/    download manager
@@ -97,4 +111,4 @@ tests/          vitest
 
 ## Data
 
-Everything lives in `%APPDATA%\NexusForge`: `nexusforge.json` (library, settings, mod metadata), `mods/` (staging, configurable), `profiles/<game>/<profile>.json`, `deployments/<game>.json` (manifests), `backups/`, `overwrite/`, `downloads/`, `plugins/`, `logs/`.
+Everything lives in `%APPDATA%\NexusForge`: `nexusforge.json` (library, settings, mod metadata), `mods/` (staging, configurable), `profiles/<game>/<profile>.json`, `deployments/<game>.json` (manifests), `backups/`, `overwrite/`, `downloads/`, `plugins/`, `logs/`, `bug-reports/`, `session.json` (did the last session close properly). Updates and uninstalls leave this folder alone; downloaded updates are cached in `%LOCALAPPDATA%\nexusforge-updater`.

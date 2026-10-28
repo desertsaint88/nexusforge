@@ -16,6 +16,8 @@ import * as detect from './mods/detect'
 import * as updates from './mods/updates'
 import * as setup from './integrations/orchestrator'
 import * as diagnostics from './diagnostics/diagnostics'
+import * as bugreport from './bugreport/bugreport'
+import * as updater from './updater/updater'
 import { forgetIntegration } from './integrations/registry'
 import { applyUiScale } from './window'
 
@@ -116,7 +118,7 @@ export function registerIpc(rendererUrl: string): void {
   handle('settings:set', async (_e, patch) => {
     const allowed: Array<keyof Settings> = [
       'accent', 'reduceMotion', 'minimizeOnLaunch', 'autoFetchArtwork', 'scanPlatforms', 'customFolders', 'scanAllDrives', 'scanOnStartup', 'modStorageDir',
-      'defaultStrategy', 'autoDeploy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete', 'uiScale'
+      'defaultStrategy', 'autoDeploy', 'dependencyMode', 'steamcmdPath', 'logLevel', 'sources', 'firstRunComplete', 'uiScale', 'checkUpdatesOnStartup'
     ]
     const clean: Partial<Settings> = {}
     for (const k of allowed) if (patch && k in patch) (clean as Record<string, unknown>)[k] = patch[k]
@@ -224,6 +226,22 @@ export function registerIpc(rendererUrl: string): void {
     return rescanAfter(str(gameId, 'game'), diagnostics.applyFix(gameId, str(fixId, 'repair'), p))
   })
   handle('diagnostics:export', (e, gameId) => diagnostics.exportDiagnostics(str(gameId, 'game'), win(e)))
+
+  handle('bugreport:state', () => bugreport.bugReportState())
+  handle('bugreport:capture', (e) => bugreport.captureWindow(win(e)))
+  handle('bugreport:preview', (_e, input) => bugreport.previewReport(input))
+  handle('bugreport:submit', (_e, input, target) => {
+    if (target !== 'panel' && target !== 'browser' && target !== 'save') throw new Error('Invalid target')
+    return bugreport.submitReport(input, target)
+  })
+  handle('bugreport:rendererError', (_e, error) => bugreport.rendererError(error))
+  handle('bugreport:openFolder', (_e, dir) => bugreport.openReportsFolder(typeof dir === 'string' && dir ? dir : undefined))
+  handle('bugreport:dismissCrash', () => bugreport.dismissCrash())
+  handle('bugreport:githubSignIn', () => bugreport.githubSignIn())
+
+  handle('updater:state', () => updater.updateStatus())
+  handle('updater:check', () => updater.checkForUpdates())
+  handle('updater:install', () => updater.installUpdate())
 
   handle('sources:list', () => sources.listSources())
   handle('sources:search', (_e, id, q, gameId) => sources.searchSource(str(id, 'source'), String(q ?? ''), gameId || undefined))

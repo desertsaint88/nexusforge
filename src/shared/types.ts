@@ -955,6 +955,8 @@ export interface Settings {
   feeds: FeedConfig[]
   trustedPlugins: Record<string, string>
   firstRunComplete: boolean
+  /** Look for a new NexusForge release on GitHub every time it starts. */
+  checkUpdatesOnStartup: boolean
 }
 
 export interface AppInfo {
@@ -973,4 +975,92 @@ export interface Toast {
   kind: 'success' | 'error' | 'info' | 'warning'
   title: string
   message?: string
+  /** A button on the toast. Error toasts get "Report" automatically. */
+  action?: ToastAction
+  /** Stays until dismissed (an update that is ready, a crash to report). */
+  sticky?: boolean
+}
+
+export type ToastAction = { id: 'report'; label: string; report?: Partial<BugReportInput> } | { id: 'update'; label: string } | { id: 'open-updates'; label: string }
+
+// ---------------------------------------------------------------------------
+// Bug reports
+
+/** An error NexusForge saw (logged as an error anywhere, an uncaught exception, a renderer error, a crashed process). */
+export interface RecordedError {
+  at: number
+  source: 'main' | 'renderer' | 'process'
+  /** Logger scope ("deploy", "ipc"), when the error came through the log. */
+  scope?: string
+  message: string
+  detail?: string
+}
+
+export interface BugReportInput {
+  title: string
+  /** What happened. */
+  description: string
+  steps?: string
+  expected?: string
+  /** Where the report was started: 'manual', 'toast', 'error-screen', 'diagnose', 'deploy', 'crash', 'palette'. */
+  origin?: string
+  gameId?: string
+  /** The page the user was on ("game:Grand Theft Auto V / diagnose"). */
+  page?: string
+  /** The error the report is about. */
+  error?: { message: string; detail?: string }
+  include: { system: boolean; errors: boolean; log: boolean; diagnostics: boolean; screenshot: boolean }
+}
+
+export interface BugReportPreview {
+  title: string
+  /** The issue text exactly as it is sent (personal details already taken out). */
+  body: string
+  /** Sections that were shortened to fit GitHub's new-issue link; the saved report has them in full. */
+  shortened: string[]
+}
+
+export interface BugReportResult {
+  /** Folder with the full report (report.md, log.txt, screenshot.png, diagnostics.md). */
+  dir: string
+  /** Where the issue form was opened. */
+  opened: 'panel' | 'browser' | 'none'
+}
+
+export interface BugReportState {
+  recentErrors: RecordedError[]
+  /** NexusForge did not close properly last time (crash, killed, power loss). */
+  lastSessionCrash?: { startedAt: number; lastSeen: number; version: string; lastErrors: string[] }
+  /** Signed in to github.com inside NexusForge (the issue form opens in the app). */
+  githubSignedIn: boolean
+  githubUser?: string
+  reportsDir: string
+  repoUrl: string
+}
+
+// ---------------------------------------------------------------------------
+// App updates
+
+export interface AppUpdateStatus {
+  current: string
+  /**
+   * auto: an installed copy; updates download and install inside the app, silently, and it restarts.
+   * installer: a copy run from a folder (unpacked build, portable); the new installer is downloaded and started.
+   * dev: development run; checks only.
+   */
+  mode: 'auto' | 'installer' | 'dev'
+  phase: 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'installing' | 'error'
+  /** Newest version on GitHub, when it is newer. */
+  version?: string
+  releaseName?: string
+  /** Release notes as plain text. */
+  notes?: string
+  releaseDate?: string
+  releaseUrl?: string
+  percent?: number
+  transferred?: number
+  total?: number
+  bytesPerSecond?: number
+  error?: string
+  checkedAt?: number
 }

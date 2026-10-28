@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { ResolvedDependency, Toast } from '@shared/types'
 
 export type GameTab = 'mods' | 'conflicts' | 'profiles' | 'diagnose' | 'settings'
-export type SettingsSection = 'general' | 'library' | 'mods' | 'sources' | 'advanced'
+export type SettingsSection = 'general' | 'library' | 'mods' | 'sources' | 'advanced' | 'about'
 
 export type Route =
   | { name: 'library' }
@@ -45,8 +45,10 @@ export const useToasts = create<ToastState>((set, get) => ({
   toasts: [],
   push(t) {
     const id = `t${++toastSeq}`
-    set({ toasts: [...get().toasts.slice(-4), { ...t, id }] })
-    setTimeout(() => get().dismiss(id), t.kind === 'error' ? 8000 : 4500)
+    // Every error can be reported from where it shows up.
+    const action = t.action ?? (t.kind === 'error' ? { id: 'report' as const, label: 'Report', report: { title: t.title, error: { message: t.message ? `${t.title}: ${t.message}` : t.title }, origin: 'toast' } } : undefined)
+    set({ toasts: [...get().toasts.slice(-4), { ...t, action, id }] })
+    if (!t.sticky) setTimeout(() => get().dismiss(id), t.kind === 'error' ? 10_000 : 4500)
   },
   dismiss(id) {
     set({ toasts: get().toasts.filter((x) => x.id !== id) })

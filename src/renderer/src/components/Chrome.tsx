@@ -1,7 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, CircleAlert, CircleCheck, Compass, Download, Info, Library, Minus, Search, Settings, Square, SquareStack, TriangleAlert, UserRound, X } from 'lucide-react'
+import { ArrowLeft, Bug, CircleAlert, CircleArrowUp, CircleCheck, Compass, Download, Info, Library, Minus, Search, Settings, Square, SquareStack, TriangleAlert, UserRound, X } from 'lucide-react'
+import type { ToastAction } from '@shared/types'
 import { usePalette } from './CommandPalette'
+import { reportBug, useBugReport, useUpdater } from '../store/bugreport'
+import { startUpdate } from '../lib/update'
 import { invoke, on } from '../lib/api'
 import { cn, PLATFORM_COLOR, PLATFORM_LABEL } from '../lib/format'
 import { useNav, useToasts, type Route } from '../store/ui'
@@ -27,9 +30,31 @@ export function Logo({ size = 28 }: { size?: number }) {
   )
 }
 
+/** In the title bar while an update is waiting, downloading or installing. */
+function UpdatePill() {
+  const status = useUpdater((s) => s.status)
+  if (!status || !['available', 'downloading', 'installing'].includes(status.phase) || !status.version) return null
+  const busy = status.phase !== 'available'
+  return (
+    <motion.button
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      onClick={() => (busy ? useNav.getState().navigate({ name: 'settings', section: 'about' }) : void startUpdate())}
+      className="accent-gradient flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-white shadow-lg"
+      title={busy ? 'Show update progress' : `Update to NexusForge ${status.version}`}
+    >
+      <CircleArrowUp className={cn('size-3.5', busy && 'animate-pulse')} />
+      {status.phase === 'available' && `Update ${status.version}`}
+      {status.phase === 'downloading' && `Updating ${Math.round(status.percent ?? 0)}%`}
+      {status.phase === 'installing' && 'Restarting…'}
+    </motion.button>
+  )
+}
+
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false)
   const { history, back } = useNav()
+  const errorCount = useBugReport((s) => s.state?.recentErrors.length ?? 0)
   useEffect(() => {
     void invoke('window:isMaximized').then(setMaximized)
     return on('window:maximized', setMaximized)
@@ -60,6 +85,18 @@ export function TitleBar() {
           <Search className="size-3.5" />
           <span className="flex-1 truncate text-left">Search games and pages</span>
           <kbd className="rounded border border-white/[0.1] px-1 font-mono text-[10px]">Ctrl K</kbd>
+        </button>
+      </div>
+      <div className="no-drag mr-2 flex items-center gap-1.5" onDoubleClick={(e) => e.stopPropagation()}>
+        <UpdatePill />
+        <button
+          onClick={() => reportBug({ origin: 'title bar' })}
+          className="relative flex size-7 items-center justify-center rounded-md text-ink-300 transition-colors hover:bg-white/[0.07] hover:text-ink-100"
+          aria-label="Report a bug"
+          title={errorCount ? `Report a bug (${errorCount} error(s) recorded in this session)` : 'Report a bug'}
+        >
+          <Bug className="size-4" />
+          {errorCount > 0 && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-rose-400/90" />}
         </button>
       </div>
       <div className="no-drag flex h-full">
@@ -197,6 +234,12 @@ export function PlatformBadge({ platform, className }: { platform: string; class
   )
 }
 
+function runToastAction(a: ToastAction): void {
+  if (a.id === 'report') reportBug(a.report)
+  else if (a.id === 'update') void startUpdate()
+  else useNav.getState().navigate({ name: 'settings', section: 'about' })
+}
+
 export function Toasts() {
   const { toasts, dismiss } = useToasts()
   const icons = {
@@ -223,6 +266,19 @@ export function Toasts() {
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold text-ink-100">{t.title}</div>
               {t.message && <div className="selectable mt-0.5 text-[12.5px] leading-relaxed break-words text-ink-300">{t.message}</div>}
+              {t.action && (
+                <button
+                  className="mt-2 flex h-6.5 items-center gap-1.5 rounded-md border border-white/[0.12] bg-white/[0.06] px-2 text-[12px] font-medium text-ink-100 transition-colors hover:bg-white/[0.12]"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    dismiss(t.id)
+                    runToastAction(t.action!)
+                  }}
+                >
+                  {t.action.id === 'report' ? <Bug className="size-3.5" /> : <CircleArrowUp className="size-3.5" />}
+                  {t.action.label}
+                </button>
+              )}
             </div>
           </motion.div>
         ))}

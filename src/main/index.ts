@@ -6,6 +6,7 @@ import { registerIpc } from './ipc'
 import { createMainWindow, rendererUrl } from './window'
 import { loadSources } from './sources/registry'
 import { refreshArtwork, refreshGluedNames, scanLibrary } from './library/library'
+import { isEngineBuildString } from './library/exe-version'
 import { rescanGames } from './mods/detect'
 import { clearCloudflareCookies } from './web/browser'
 import { NEXUS_PARTITION } from './sources/nexus'
@@ -79,6 +80,17 @@ if (!app.requestSingleInstanceLock()) {
       if (moved) {
         db().set('games', games)
         logger.info(`moved ${moved} game(s) from symlinks to automatic deployment`)
+      }
+    })
+    // Versions are read once and kept. Before 1.5 an engine/SDK build string could be stored as the game's version;
+    // those are cleared so the startup refresh reads them again with the current check.
+    await runOnce('engine-versions-1.5', async () => {
+      const games = db().get('games')
+      const stale = Object.values(games).filter((g) => g.version && isEngineBuildString(g.version))
+      for (const g of stale) g.version = undefined
+      if (stale.length) {
+        db().set('games', games)
+        logger.info(`re-reading ${stale.length} version(s) that were engine build strings`)
       }
     })
 

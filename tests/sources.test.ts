@@ -10,7 +10,7 @@ import { nexusListing, parseNxm } from '../src/main/sources/nexus'
 import { placeInOrder } from '../src/main/mods/order'
 import { missingRequirements, supportsVersion } from '../src/shared/deps'
 import { extractGma, addonSlug } from '../src/main/steam/gma'
-import { readExeVersion } from '../src/main/library/exe-version'
+import { isEngineBuildString, readExeVersion } from '../src/main/library/exe-version'
 import type { InstalledMod } from '../src/shared/types'
 
 describe('game name matching', () => {
@@ -170,5 +170,12 @@ describe('exe version', () => {
   it('reads the version resource of a Windows executable', async () => {
     const v = await readExeVersion('C:\\Windows\\System32\\notepad.exe')
     expect(v).toMatch(/^\d+\.\d+/)
+  })
+
+  it('treats engine and SDK build strings as no game version', () => {
+    expect(isEngineBuildString('++EOSSDK+Release-1.19.0.3')).toBe(true)
+    expect(isEngineBuildString('++UE5+Release-5.5-CL-0')).toBe(true)
+    expect(isEngineBuildString('1.0.3889.0')).toBe(false)
+    expect(isEngineBuildString('2.31')).toBe(false)
   })
 })

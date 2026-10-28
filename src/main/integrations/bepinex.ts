@@ -244,7 +244,7 @@ export function bepinexLoader(spec: Pick<BepInExGameSpec, 'major' | 'name' | 'fl
         dir,
         required,
         canRemove: Boolean(managed),
-        via: managed ? ('github' as const) : ('manual' as const),
+        via: managed || !(f.core || f.proxy) ? ('github' as const) : ('manual' as const),
         summary: 'Plugin loader for Unity games: loads the DLLs in BepInEx/plugins when the game starts.'
       }
       if (!rt.unity) {

@@ -2,7 +2,8 @@
 // in .smoke/loaders-ui is used and nothing is installed or deployed.
 // Usage: npm run build && node scripts/probe-loaders-ui.mjs   (screenshots in .smoke/loaders-ui/shots)
 import { _electron as electron } from 'playwright-core'
-import { mkdirSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import { join } from 'node:path'
 import electronPath from 'electron'
 
@@ -11,6 +12,9 @@ const base = join(root, '.smoke', 'loaders-ui')
 const shots = join(base, 'shots')
 rmSync(base, { recursive: true, force: true })
 mkdirSync(shots, { recursive: true })
+// The library from a copy of the real data file (the real profile is never opened by this probe).
+mkdirSync(join(base, 'userdata'), { recursive: true })
+copyFileSync(join(os.homedir(), 'AppData', 'Roaming', 'NexusForge', 'nexusforge.json'), join(base, 'userdata', 'nexusforge.json'))
 
 const env = { ...process.env, NEXUSFORGE_USER_DATA: join(base, 'userdata'), NEXUSFORGE_NO_CLIPBOARD: '1' }
 delete env.ELECTRON_RENDERER_URL
@@ -46,7 +50,7 @@ for (const name of wanted) {
     const panel = page.locator('[aria-expanded]').first()
     if ((await panel.getAttribute('aria-expanded')) === 'false') await panel.click()
     await page.waitForTimeout(1500)
-    const info = await invoke('integration:info', games.find((x) => x.name === name).id).catch((e) => ({ error: e.message }))
+    const info = await invoke('integration:inspect', games.find((x) => x.name === name).id).catch((e) => ({ error: e.message }))
     console.log(`${name}: ${info?.name ?? info?.error} | ${(info?.loaders ?? []).map((l) => `${l.name}=${l.state}${l.proxy ? '@' + l.proxy : ''}`).join(', ')}`)
     await page.screenshot({ path: join(shots, `${name.replace(/\W+/g, '-')}.png`) })
   } catch (e) {

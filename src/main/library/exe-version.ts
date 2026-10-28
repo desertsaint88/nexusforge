@@ -131,7 +131,8 @@ export async function readExeVersion(exe: string): Promise<string | undefined> {
     const file = stringValue(block, 'FileVersion')
     const v = product ?? file ?? fixedVersion(block)
     if (!v) return undefined
-    if (/\+\+UE[45]|release-[45]\.\d/i.test(v)) return undefined
+    // Engine and SDK build strings ("++UE5+Release-5.5", Epic Online Services' "++EOSSDK+Release-1.19") are not the game's version.
+    if (/\+\+(UE[45]|EOSSDK)|release-[45]\.\d/i.test(v)) return undefined
     const parts = v.replace(/,\s*/g, '.').trim().split('.')
     while (parts.length > 2 && parts[parts.length - 1] === '0') parts.pop()
     return parts.join('.').slice(0, 40)

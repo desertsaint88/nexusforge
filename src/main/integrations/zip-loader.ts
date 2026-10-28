@@ -209,7 +209,10 @@ export function zipLoader(spec: ZipLoaderSpec): LoaderAdapter & { spec: ZipLoade
       const dir = spec.targetDir(game, info)
       const managed = mods.find((m) => m.loaderId === spec.id)
       const required = mods.some((m) => loadersNeeded(m).includes(spec.id))
-      const base = { id: spec.id, name: spec.name, dir, required, summary: spec.summary, requires: spec.requires, canRemove: Boolean(managed), via: managed ? ('nexusforge' as const) : ('manual' as const) }
+      const present = await markersPresent(spec, game, info)
+      // 'manual' only for a loader that is there without NexusForge; otherwise where it comes (or came) from.
+      const official = spec.repo ? ('github' as const) : ('nexusforge' as const)
+      const base = { id: spec.id, name: spec.name, dir, required, summary: spec.summary, requires: spec.requires, canRemove: Boolean(managed), via: managed || !present ? official : ('manual' as const) }
       const unsupported = await spec.unsupported?.(game, env, ctx)
       if (unsupported) return { ...base, state: 'unsupported', canInstall: false, canUpdate: false, blocked: unsupported }
       const warning = await spec.warning?.(game, env, ctx)
@@ -219,7 +222,6 @@ export function zipLoader(spec: ZipLoaderSpec): LoaderAdapter & { spec: ZipLoade
       } catch {
         // offline or no fitting release: no update info
       }
-      const present = await markersPresent(spec, game, info)
       const proxy = await proxyChoiceFor(spec, game, mods, info)
       const proxyOk = !spec.proxy || Boolean(proxy?.existing)
       const version = managed?.version

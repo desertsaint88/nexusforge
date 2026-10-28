@@ -58,7 +58,8 @@ function headerLoaders(loaders: LoaderStatus[]): { shown: LoaderStatus[]; more: 
   return { shown, more: loaders.filter((l) => !shown.includes(l) && l.state !== 'unsupported').length }
 }
 
-function LoaderRow({ game, loader }: { game: Game; loader: LoaderStatus }) {
+function LoaderRow({ game, loader, all }: { game: Game; loader: LoaderStatus; all: LoaderStatus[] }) {
+  const needs = (loader.requires ?? []).map((id) => all.find((l) => l.id === id)?.name ?? id)
   const busy = useMods((s) => Boolean(s.loaderBusy[`${game.id}:${loader.id}`]))
   const { installLoader, removeLoader } = useMods()
   const action = loader.canUpdate ? 'Update' : loader.canInstall ? (loader.state === 'broken' ? 'Repair' : 'Install') : undefined
@@ -68,7 +69,7 @@ function LoaderRow({ game, loader }: { game: Game; loader: LoaderStatus }) {
         <span className="text-[13.5px] font-semibold text-ink-100">{loader.name}</span>
         {loaderBadge(loader)}
         {loader.via && loader.state !== 'unsupported' && (
-          <span className="text-[11.5px] text-ink-400">{loader.via === 'steam' ? 'through Steam' : loader.via === 'github' ? 'official GitHub release' : loader.via === 'manual' ? 'installed by hand' : 'NexusForge'}</span>
+          <span className="text-[11.5px] text-ink-400">{loader.via === 'steam' ? 'through Steam' : loader.via === 'github' ? 'official GitHub release' : loader.via === 'manual' ? 'installed by hand' : 'official release'}</span>
         )}
         <div className="flex-1" />
         {action && (
@@ -99,7 +100,7 @@ function LoaderRow({ game, loader }: { game: Game; loader: LoaderStatus }) {
           </Button>
         )}
       </div>
-      {loader.summary && <p className="mt-1 text-[12px] leading-relaxed text-ink-400">{loader.summary}{loader.requires?.length ? ` Needs ${loader.requires.join(' and ')} (installed with it).` : ''}</p>}
+      {loader.summary && <p className="mt-1 text-[12px] leading-relaxed text-ink-400">{loader.summary}{needs.length ? ` Needs ${needs.join(' and ')} (installed with it).` : ''}</p>}
       {(loader.detail || loader.blocked) && <p className={cn('mt-1.5 text-[12.5px] leading-relaxed', loader.blocked ? 'text-amber-200/90' : 'text-ink-300')}>{loader.blocked ?? loader.detail}</p>}
       {loader.warning && !loader.blocked && (
         <p className="mt-1.5 flex gap-2 text-[12.5px] leading-relaxed text-amber-200/90">
@@ -267,7 +268,7 @@ export function SetupPanel({ game }: { game: Game }) {
               {showOp && <Operation op={op} />}
 
               {info.loaders.map((l) => (
-                <LoaderRow key={l.id} game={game} loader={l} />
+                <LoaderRow key={l.id} game={game} loader={l} all={info.loaders} />
               ))}
 
               {[...info.warnings, ...info.limitations].length > 0 && (

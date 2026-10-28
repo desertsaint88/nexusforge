@@ -81,8 +81,13 @@ npx vitest run --config scripts/live/vitest.live.config.ts   # live checks: real
 node scripts/probe-diagnostics.mjs   # Diagnose on a copy of the real data file (game folders only read), reports in .smoke/diagnostics
 node scripts/probe-bugreport.mjs     # bug reports end to end (crash prompt, preview, saved report, GitHub form) + update check
 npm run dist         # NSIS installer in release/ (not published)
-npm run release      # build + publish a GitHub release (needs GH_TOKEN); raise "version" in package.json first
+npm run release      # dist + scripts/release.mjs: draft release, upload installer/blockmap/latest.yml (digest-checked), publish
+                     # raise "version" in package.json and push first; token from GH_TOKEN or Git's stored GitHub login
+node scripts/live/update-e2e.mjs <older NexusForge-Setup.exe> <released version>
+                     # real update test: installs the older build in .smoke, lets it update itself from GitHub, uninstalls it
 ```
+
+Build an older test installer without publishing it: `npx electron-builder --win --publish never -c.extraMetadata.version=1.6.9 -c.directories.output=release-test`.
 
 A release holds the installer, its `.blockmap` (differential updates) and `latest.yml` (version, SHA-512); installed copies read `latest.yml` to update.
 

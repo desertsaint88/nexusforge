@@ -23,7 +23,7 @@
     "smoke": "node scripts/smoke.mjs",
     "icon": "electron scripts/make-icon.mjs",
     "dist": "npm run build && electron-builder --win --publish never",
-    "release": "npm run build && electron-builder --win --publish always",
+    "release": "npm run dist && node scripts/release.mjs",
     "dist:dir": "npm run build && electron-builder --win --dir --publish never"
   },
   "dependencies": {

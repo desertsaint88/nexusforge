@@ -129,8 +129,8 @@ export function DownloadsPage() {
     <div className="h-full overflow-y-auto px-8 pt-4 pb-10">
       <div className="mb-6 flex items-end justify-between">
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight text-ink-100">Downloads</h1>
-          <p className="mt-0.5 text-[13.5px] text-ink-300">{active.length ? `${active.length} in progress` : 'Nothing downloading right now'}</p>
+          <h1 className="text-[24px] font-semibold tracking-tight text-ink-100">Downloads</h1>
+          <p className="mt-0.5 text-[13px] text-ink-400">{active.length ? `${active.length} in progress` : 'Nothing downloading right now'}</p>
         </div>
         {finished.length > 0 && (
           <Button icon={<Trash className="size-4" />} onClick={() => void clear()}>

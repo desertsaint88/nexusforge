@@ -90,6 +90,7 @@ export function createModioAdapter(ctx: AdapterContext): ModSourceAdapter {
     sortLabels: { endorsed: 'Highest rated', downloads: 'Most downloaded', trending: 'Popular', newest: 'Recently added', updated: 'Last updated' },
 
     paged: true,
+    pageSize: 48,
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       // Without a key the game lookup fails too; say what's actually missing.

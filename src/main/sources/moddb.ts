@@ -62,8 +62,11 @@ export function createModDbAdapter(ctx: AdapterContext): ModSourceAdapter {
     // ModDB's "Popular Today" (rank today, by visits) is its trending list.
     sorts: ['relevance', 'endorsed', 'downloads', 'trending', 'newest', 'updated'],
     sortLabels: { endorsed: 'Rating', downloads: 'Downloads', trending: 'Popular Today', newest: 'Added', updated: 'Updated' },
+    // The rating list only has mods with enough votes (none at all for BeamNG.drive); the rest follow by downloads.
+    fills: { endorsed: 'downloads' },
 
     paged: true,
+    pageSize: 30,
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const slug = await ctx.binding(gameId)

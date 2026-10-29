@@ -7,19 +7,18 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
 type Size = 'sm' | 'md' | 'lg'
 
 const variants: Record<Variant, string> = {
-  // Dark and quiet: the main action stands out by contrast and weight, not by color.
-  primary:
-    'accent-gradient text-ink-100 border border-white/[0.13] shadow-[0_10px_28px_-14px_rgba(0,0,0,0.95)] hover:border-white/[0.22] hover:text-white hover:brightness-125 active:brightness-100',
-  secondary: 'bg-white/[0.06] hover:bg-white/[0.1] text-ink-100 border border-white/[0.08]',
-  outline: 'bg-transparent hover:bg-white/[0.05] text-ink-100 border border-white/[0.12]',
-  ghost: 'bg-transparent hover:bg-white/[0.06] text-ink-200 hover:text-ink-100 border border-transparent',
-  danger: 'bg-rose-500/12 hover:bg-rose-500/20 text-rose-300 border border-rose-400/20'
+  // The main action is light on dark; everything else is a quiet surface that lightens on hover.
+  primary: 'btn-light border border-transparent font-semibold hover:brightness-[1.06] active:brightness-95',
+  secondary: 'bg-white/[0.065] hover:bg-white/[0.1] text-ink-100 border border-transparent',
+  outline: 'bg-transparent hover:bg-white/[0.05] text-ink-100 border border-white/[0.1] hover:border-white/[0.16]',
+  ghost: 'bg-transparent hover:bg-white/[0.06] text-ink-300 hover:text-ink-100 border border-transparent',
+  danger: 'bg-rose-500/10 hover:bg-rose-500/[0.16] text-rose-300 border border-transparent'
 }
 
 const sizes: Record<Size, string> = {
-  sm: 'h-8 px-3 text-[13px] gap-1.5 rounded-lg',
-  md: 'h-9.5 px-4 text-sm gap-2 rounded-xl',
-  lg: 'h-12 px-6 text-[15px] gap-2.5 rounded-2xl font-semibold'
+  sm: 'h-8 px-3 text-[12.5px] gap-1.5 rounded-lg',
+  md: 'h-9 px-3.5 text-[13px] gap-2 rounded-[10px]',
+  lg: 'h-11 px-5 text-[14px] gap-2.5 rounded-xl font-semibold'
 }
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -87,13 +86,13 @@ export function Toggle({ checked, onChange, disabled, label }: { checked: boolea
       }}
       className={cn(
         'no-drag relative inline-flex h-5.5 w-9.5 shrink-0 items-center rounded-full border transition-colors duration-200 disabled:opacity-40',
-        checked ? 'accent-line border-white/15' : 'border-white/10 bg-white/[0.07]'
+        checked ? 'accent-line border-transparent' : 'border-transparent bg-white/[0.1]'
       )}
     >
       <motion.span
         layout
         transition={{ type: 'spring', stiffness: 700, damping: 35 }}
-        className={cn('block size-4 rounded-full bg-white shadow-md', checked ? 'ml-[18px]' : 'ml-[2px]')}
+        className={cn('block size-4 rounded-full shadow-md', checked ? 'ml-[18px] bg-ink-950' : 'ml-[2px] bg-ink-200')}
       />
     </button>
   )
@@ -104,7 +103,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     <input
       ref={ref}
       className={cn(
-        'no-drag h-9.5 w-full rounded-xl border border-white/[0.08] bg-black/25 px-3.5 text-sm text-ink-100 placeholder:text-ink-400 transition-colors outline-none focus:border-[color-mix(in_oklab,var(--nf-accent)_60%,transparent)] focus:bg-black/35',
+        'no-drag h-9 w-full rounded-[10px] border border-white/[0.06] bg-white/[0.035] px-3 text-[13px] text-ink-100 placeholder:text-ink-400 transition-colors outline-none hover:border-white/[0.1] focus:border-white/[0.2] focus:bg-white/[0.05]',
         mono && 'font-mono text-[12.5px]',
         className
       )}
@@ -116,8 +115,8 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 export function SearchInput({ value, onChange, placeholder, className, autoFocus }: { value: string; onChange(v: string): void; placeholder?: string; className?: string; autoFocus?: boolean }) {
   return (
     <div className={cn('relative', className)}>
-      <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-400" />
-      <Input autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="pr-8 pl-9" />
+      <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-ink-400" />
+      <Input autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="pr-8 pl-8.5" />
       {value && (
         <button className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md p-1 text-ink-400 hover:text-ink-100" onClick={() => onChange('')} aria-label="Clear">
           <X className="size-3.5" />
@@ -129,19 +128,19 @@ export function SearchInput({ value, onChange, placeholder, className, autoFocus
 
 export function Badge({ children, tone = 'neutral', className }: { children: ReactNode; tone?: 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'; className?: string }) {
   const tones = {
-    neutral: 'bg-white/[0.06] text-ink-200 border-white/[0.08]',
-    accent: 'bg-[color-mix(in_oklab,var(--nf-accent)_18%,transparent)] text-[color-mix(in_oklab,var(--nf-accent)_55%,white)] border-[color-mix(in_oklab,var(--nf-accent)_35%,transparent)]',
-    success: 'bg-emerald-500/12 text-emerald-300 border-emerald-400/20',
-    warning: 'bg-amber-500/12 text-amber-300 border-amber-400/20',
-    danger: 'bg-rose-500/12 text-rose-300 border-rose-400/20',
-    info: 'bg-sky-500/12 text-sky-300 border-sky-400/20'
+    neutral: 'bg-white/[0.07] text-ink-200',
+    accent: 'bg-[color-mix(in_oklab,var(--nf-accent)_18%,transparent)] text-[color-mix(in_oklab,var(--nf-accent)_50%,white)]',
+    success: 'bg-emerald-500/[0.13] text-emerald-300',
+    warning: 'bg-amber-500/[0.13] text-amber-300',
+    danger: 'bg-rose-500/[0.13] text-rose-300',
+    info: 'bg-sky-500/[0.13] text-sky-300'
   }
-  return <span className={cn('inline-flex h-5.5 items-center gap-1 rounded-md border px-1.5 text-[11px] font-semibold tracking-wide whitespace-nowrap', tones[tone], className)}>{children}</span>
+  return <span className={cn('inline-flex h-5 items-center gap-1 rounded-[6px] px-1.5 text-[11px] font-medium whitespace-nowrap', tones[tone], className)}>{children}</span>
 }
 
 export function ProgressBar({ value, indeterminate, className }: { value?: number; indeterminate?: boolean; className?: string }) {
   return (
-    <div className={cn('relative h-1.5 w-full overflow-hidden rounded-full bg-white/[0.07]', className)}>
+    <div className={cn('relative h-1 w-full overflow-hidden rounded-full bg-white/[0.08]', className)}>
       {indeterminate ? (
         <motion.div
           className="accent-line absolute inset-y-0 w-1/3 rounded-full"
@@ -169,10 +168,7 @@ export function PlayGlyph({ className }: { className?: string }) {
   )
 }
 
-/**
- * The Play button: near-black, a hairline border and the play mark in a small ring. Hover only lifts the
- * border and the text, so it sits calmly on top of any cover art.
- */
+/** The Play button: the one light, solid button on a page. Disabled (running, missing) it turns into a quiet chip. */
 export function PlayButton({
   label = 'Play',
   size = 'md',
@@ -180,22 +176,20 @@ export function PlayButton({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { label?: ReactNode; size?: 'sm' | 'md' | 'lg' }) {
   const s = {
-    sm: { box: 'h-9 gap-2 rounded-xl pl-1.5 pr-3.5 text-[12.5px]', ring: 'size-6', glyph: 'size-3' },
-    md: { box: 'h-11 gap-2.5 rounded-2xl pl-2 pr-5 text-[14px]', ring: 'size-7', glyph: 'size-3.5' },
-    lg: { box: 'h-12 gap-3 rounded-2xl pl-2 pr-6 text-[15px]', ring: 'size-8', glyph: 'size-4' }
+    sm: { box: 'h-8 gap-1.5 rounded-lg px-3 text-[12.5px]', glyph: 'size-3' },
+    md: { box: 'h-10 gap-2 rounded-[10px] px-4.5 text-[13.5px]', glyph: 'size-3.5' },
+    lg: { box: 'h-11 gap-2.5 rounded-xl px-6 text-[14px]', glyph: 'size-3.5' }
   }[size]
   return (
     <button
       className={cn(
-        'no-drag group/play inline-flex shrink-0 items-center justify-center border border-white/[0.1] bg-[#0b0c0e]/85 font-semibold tracking-wide text-ink-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_12px_30px_-16px_rgba(0,0,0,1)] backdrop-blur-md transition-all duration-200 hover:border-white/[0.24] hover:bg-[#121316]/90 hover:text-white active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45',
+        'no-drag btn-light inline-flex shrink-0 items-center justify-center font-semibold shadow-[0_10px_30px_-12px_rgba(0,0,0,0.9)] transition-all duration-200 hover:brightness-[1.06] active:scale-[0.98] disabled:pointer-events-none disabled:bg-white/[0.08] disabled:text-ink-300 disabled:shadow-none disabled:backdrop-blur-md',
         s.box,
         className
       )}
       {...rest}
     >
-      <span className={cn('flex shrink-0 items-center justify-center rounded-full border border-white/[0.14] bg-white/[0.04] transition-colors group-hover/play:border-white/30 group-hover/play:bg-white/[0.08]', s.ring)}>
-        <PlayGlyph className={cn('translate-x-[0.5px]', s.glyph)} />
-      </span>
+      <PlayGlyph className={cn('-ml-0.5', s.glyph)} />
       {label}
     </button>
   )
@@ -228,7 +222,7 @@ export function SectionTitle({ title, subtitle, right }: { title: string; subtit
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <label className="block">
-      <div className="mb-1.5 text-[12.5px] font-medium text-ink-200">{label}</div>
+      <div className="mb-1.5 text-[12px] font-medium text-ink-300">{label}</div>
       {children}
       {hint && <div className="mt-1.5 text-[12px] leading-relaxed text-ink-400">{hint}</div>}
     </label>
@@ -237,18 +231,18 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 
 export function Segmented<T extends string>({ value, options, onChange, size = 'md' }: { value: T; options: Array<{ value: T; label: ReactNode }>; onChange(v: T): void; size?: 'sm' | 'md' }) {
   return (
-    <div className="no-drag inline-flex rounded-xl border border-white/[0.07] bg-black/25 p-0.5">
+    <div className="no-drag inline-flex rounded-[10px] bg-white/[0.04] p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            'relative rounded-[10px] font-medium transition-colors',
+            'relative rounded-lg font-medium transition-colors',
             size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
             value === o.value ? 'text-ink-100' : 'text-ink-400 hover:text-ink-200'
           )}
         >
-          {value === o.value && <motion.span layoutId={`seg-${options.map((x) => x.value).join('-')}`} className="absolute inset-0 rounded-[10px] bg-white/[0.09]" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+          {value === o.value && <motion.span layoutId={`seg-${options.map((x) => x.value).join('-')}`} className="absolute inset-0 rounded-lg bg-white/[0.09] shadow-[0_1px_2px_rgba(0,0,0,0.4)]" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
           <span className="relative inline-flex items-center gap-1.5">{o.label}</span>
         </button>
       ))}

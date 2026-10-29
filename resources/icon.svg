@@ -1,24 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#17142a"/>
-      <stop offset="1" stop-color="#07080d"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8b5cf6"/>
-      <stop offset="1" stop-color="#22d3ee"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.9">
-      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="nf-t" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b2c32"/><stop offset="1" stop-color="#0c0c0f"/></linearGradient>
+    <linearGradient id="nf-s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b4b7bf"/></linearGradient>
+    <radialGradient id="nf-e" cx="0.42" cy="0.38" r="0.62"><stop offset="0" stop-color="#ffe6b0"/><stop offset="0.45" stop-color="#ffa14a"/><stop offset="1" stop-color="#ec5a24"/></radialGradient>
+    <radialGradient id="nf-g" cx="43" cy="19" r="22" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff8a3d" stop-opacity="0.34"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient>
   </defs>
-  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
-  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#glow)"/>
-  <rect x="17.5" y="17.5" width="477" height="477" rx="110.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
-  <g transform="translate(256 256) scale(5.4) translate(-32 -32)">
-    <path d="M32 3 57 17.5v29L32 61 7 46.5v-29Z" fill="url(#accent)" opacity="0.2"/>
-    <path d="M32 3 57 17.5v29L32 61 7 46.5v-29Z" fill="none" stroke="url(#accent)" stroke-width="3" stroke-linejoin="round"/>
-    <path d="M21 44V20l22 24V20" fill="none" stroke="#ffffff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#nf-t)"/>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#nf-g)"/>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="13.5" fill="none" stroke="#ffffff" stroke-opacity="0.09"/>
+  <path d="M21 46V18L43 46V30" fill="none" stroke="url(#nf-s)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="43" cy="19" r="5.2" fill="url(#nf-e)"/>
 </svg>

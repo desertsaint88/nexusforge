@@ -679,7 +679,7 @@ export function SettingsPage({ section }: { section?: SettingsSection }) {
   return (
     <div className="flex h-full">
       <div className="w-56 shrink-0 px-4 pt-4">
-        <h1 className="mb-5 px-3 text-[28px] font-bold tracking-tight text-ink-100">Settings</h1>
+        <h1 className="mb-5 px-3 text-[24px] font-semibold tracking-tight text-ink-100">Settings</h1>
         <div className="space-y-1">
           {sections.map((x) => (
             <button

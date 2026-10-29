@@ -186,6 +186,9 @@ export function frameworkRepo(id: string): string | undefined {
 
 const byId = (id: string) => FRAMEWORKS.find((f) => f.id === id)
 
+/** Loaders this source lists itself; others (Script Hook V from dev-c.com, tModLoader) are updated by their integration. */
+export const isFrameworkId = (id: string): boolean => Boolean(byId(id))
+
 /** Release assets of a loader that fit the game, best first (matching build, then stable, then newest). */
 export function fittingAssets<R extends { tag_name: string; prerelease: boolean; published_at: string; assets: Array<{ name: string }> }>(
   frameworkId: string,

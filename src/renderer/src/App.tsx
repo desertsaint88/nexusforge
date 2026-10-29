@@ -95,11 +95,11 @@ export function App() {
 
   return (
     <MotionConfig reducedMotion={settings?.reduceMotion ? 'always' : 'never'}>
-      <div className="app-backdrop noise relative flex h-full flex-col overflow-hidden">
+      <div className="app-backdrop relative flex h-full flex-col overflow-hidden">
         <TitleBar />
         <div className="flex min-h-0 flex-1">
           <Sidebar />
-          <main className="relative min-w-0 flex-1 overflow-hidden rounded-tl-3xl border-t border-l border-white/[0.06] bg-ink-900/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <main className="content-panel relative min-w-0 flex-1 overflow-hidden rounded-tl-2xl">
             {ready && <Page />}
           </main>
         </div>

@@ -35,7 +35,7 @@ export function Onboarding() {
   const total = lastScan?.total ?? 0
 
   return (
-    <motion.div className="app-backdrop noise fixed inset-0 z-[45] flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 1.02 }} transition={{ duration: 0.35 }}>
+    <motion.div className="app-backdrop fixed inset-0 z-[45] flex items-center justify-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 1.02 }} transition={{ duration: 0.35 }}>
       <div className="drag absolute inset-x-0 top-0 h-10" />
       <div className="relative w-full max-w-xl px-6">
         <AnimatePresence mode="wait">

@@ -5,7 +5,7 @@ import type { Game, GameModInfo, Platform } from '@shared/types'
 import { installedCount, useLibrary, visibleGames } from '../store/library'
 import { useNav } from '../store/ui'
 import { cn, formatPlaytime, PLATFORM_LABEL, relativeTime } from '../lib/format'
-import { Badge, Button, PlayButton, SearchInput } from '../components/ui'
+import { Button, PlayButton, SearchInput } from '../components/ui'
 import { Select } from '../components/Popover'
 import { CapsuleArt, GameLogo, HeroArt } from '../components/GameArt'
 import { EmptyState, PlatformBadge } from '../components/Chrome'
@@ -19,16 +19,15 @@ function ModBadge({ mods, info }: { mods: number; info?: GameModInfo }) {
   const why = info?.support.join(' · ')
   if (mods > 0)
     return (
-      <span title={`${mods} mod${mods === 1 ? '' : 's'} installed${why ? `\n${why}` : ''}`} className="inline-flex h-5.5 items-center gap-1 rounded-md border border-white/[0.12] bg-black/65 px-1.5 text-[11px] font-semibold text-ink-100 backdrop-blur-md">
+      <span title={`${mods} mod${mods === 1 ? '' : 's'} installed${why ? `\n${why}` : ''}`} className="frost inline-flex h-5.5 items-center gap-1 rounded-md px-1.5 text-[11px] font-semibold text-ink-100 tabular-nums">
         <Puzzle className="size-3" />
         {mods}
       </span>
     )
   if (info?.supported)
     return (
-      <span title={why} className="inline-flex h-5.5 items-center gap-1 rounded-md border border-white/[0.08] bg-black/55 px-1.5 text-[10.5px] font-medium text-ink-300 backdrop-blur-md">
+      <span title={why ?? 'Mod support'} className="frost inline-flex size-5.5 items-center justify-center rounded-md text-ink-300 opacity-0 transition-opacity group-hover:opacity-100">
         <Wrench className="size-3" />
-        Mod support
       </span>
     )
   return <span />
@@ -41,44 +40,50 @@ const GameCard = memo(function GameCard({ game, mods, info, running, index }: { 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 16, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: 'spring', stiffness: 260, damping: 26, delay: Math.min(index, 24) * 0.018 }}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1], delay: Math.min(index, 24) * 0.012 }}
       className="group relative"
     >
       <button
         onClick={() => navigate({ name: 'game', gameId: game.id })}
-        className="relative block aspect-[2/3] w-full overflow-hidden rounded-2xl border border-white/[0.05] bg-ink-850 text-left shadow-[0_10px_30px_-12px_rgba(0,0,0,0.9)] transition-all duration-300 ease-[var(--ease-spring)] group-hover:-translate-y-1 group-hover:border-white/[0.14] group-hover:shadow-[0_24px_50px_-14px_rgba(0,0,0,1)]"
+        className="relative block aspect-[2/3] w-full overflow-hidden rounded-xl bg-ink-850 text-left ring-1 ring-white/[0.05] transition-[box-shadow,transform] duration-300 ease-[var(--ease-spring)] group-hover:-translate-y-0.5 group-hover:shadow-[0_18px_40px_-16px_rgba(0,0,0,1)] group-hover:ring-white/[0.14]"
       >
-        <CapsuleArt game={game} className="absolute inset-0 transition-transform duration-500 ease-[var(--ease-spring)] group-hover:scale-[1.03]" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-transparent opacity-90 transition-opacity group-hover:opacity-100" />
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between p-2.5">
+        <CapsuleArt game={game} className={cn('absolute inset-0 transition-transform duration-500 ease-[var(--ease-spring)] group-hover:scale-[1.03]', game.missing && 'opacity-40 grayscale')} />
+        <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/95 via-black/45 to-transparent" />
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between p-2">
           <ModBadge mods={mods} info={info} />
-          {running && (
-            <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-1.5 py-0.5 text-[10.5px] font-bold text-emerald-300 backdrop-blur-md">
-              <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" /> RUNNING
-            </span>
-          )}
+          <div className="flex items-center gap-1">
+            {running && (
+              <span className="frost flex h-5.5 items-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium text-emerald-300">
+                <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" /> Running
+              </span>
+            )}
+            {game.missing && !running && <span className="frost flex h-5.5 items-center rounded-md px-1.5 text-[11px] font-medium text-amber-200">Missing</span>}
+            {game.favorite && (
+              <span className="frost flex size-5.5 items-center justify-center rounded-md" title="Favorite">
+                <Star className="size-3 fill-amber-300 text-amber-300" />
+              </span>
+            )}
+          </div>
         </div>
-        <div className="absolute inset-x-0 bottom-0 p-3 pb-[52px] transition-all duration-300 group-hover:pb-[60px]">
-          <div className="line-clamp-2 text-[14px] leading-snug font-semibold text-white drop-shadow">{game.name}</div>
-          <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-white/60">
+        <div className="absolute inset-x-0 bottom-0 p-3 transition-transform duration-300 ease-[var(--ease-spring)] group-hover:-translate-y-10">
+          <div className="line-clamp-2 text-[13.5px] leading-snug font-semibold text-white">{game.name}</div>
+          <div className="mt-0.5 flex items-center gap-1 text-[11.5px] text-white/55">
             <Clock className="size-3" />
             {formatPlaytime(game.playtimeMinutes)}
           </div>
         </div>
       </button>
-      <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center gap-2 transition-all duration-300 group-hover:bottom-3.5">
+      {/* Play and favorite come up on hover, so the covers stay clean. */}
+      <div className="pointer-events-none absolute inset-x-2.5 bottom-2.5 flex translate-y-1 items-center gap-1.5 opacity-0 transition-all duration-200 group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:translate-y-0 group-hover:opacity-100">
         <PlayButton size="sm" className="pointer-events-auto flex-1" onClick={() => void launch(game.id)} disabled={running || game.missing} label={game.missing ? 'Missing' : running ? 'Running' : 'Play'} />
         <button
           onClick={() => void update(game.id, { favorite: !game.favorite })}
-          className={cn(
-            'pointer-events-auto flex size-9 items-center justify-center rounded-xl border border-white/15 bg-black/50 backdrop-blur-md transition-all hover:bg-black/70',
-            game.favorite ? 'text-amber-300' : 'text-white/70 opacity-0 group-hover:opacity-100'
-          )}
+          className={cn('frost pointer-events-auto flex size-8 items-center justify-center rounded-lg transition-colors hover:bg-black/70', game.favorite ? 'text-amber-300' : 'text-white/75')}
           aria-label={game.favorite ? 'Remove from favorites' : 'Add to favorites'}
         >
-          <Star className={cn('size-4', game.favorite && 'fill-current')} />
+          <Star className={cn('size-3.5', game.favorite && 'fill-current')} />
         </button>
       </div>
     </motion.div>
@@ -93,25 +98,25 @@ function ContinuePlaying({ game }: { game: Game }) {
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative mb-8 h-[240px] overflow-hidden rounded-3xl border border-white/[0.07] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.9)]"
+      className="relative mb-7 h-[212px] overflow-hidden rounded-2xl ring-1 ring-white/[0.06]"
     >
       <HeroArt game={game} />
-      <div className="absolute inset-0 bg-gradient-to-r from-ink-950 via-ink-950/80 to-ink-950/20" />
-      <div className="absolute inset-0 bg-gradient-to-t from-ink-950/90 to-transparent" />
-      <div className="relative flex h-full flex-col justify-end p-8">
-        <div className="mb-3 flex items-center gap-2">
-          <Badge className="bg-black/40 backdrop-blur-md">
+      <div className="absolute inset-0 bg-gradient-to-r from-ink-900 via-ink-900/80 to-ink-900/10" />
+      <div className="absolute inset-0 bg-gradient-to-t from-ink-900/90 to-transparent" />
+      <div className="relative flex h-full flex-col justify-end p-7">
+        <div className="mb-2.5 flex items-center gap-1.5">
+          <span className="frost inline-flex h-5.5 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-ink-200">
             <Clock className="size-3" /> Continue playing
-          </Badge>
+          </span>
           <PlatformBadge platform={game.platform} />
         </div>
-        <GameLogo game={game} className="!max-h-20 !text-4xl" />
-        <div className="mt-2 text-[13px] text-ink-300">
+        <GameLogo game={game} className="!max-h-16 !text-3xl" />
+        <div className="mt-1.5 text-[12.5px] text-ink-300">
           {game.playtimeMinutes ? `${formatPlaytime(game.playtimeMinutes)} played · ` : ''}last played {relativeTime(game.lastPlayed)}
         </div>
-        <div className="mt-5 flex gap-2">
-          <PlayButton size="lg" onClick={() => void launch(game.id)} disabled={running} label={running ? 'Running' : 'Play'} />
-          <Button size="lg" variant="secondary" icon={<Layers className="size-4" />} onClick={() => navigate({ name: 'game', gameId: game.id })}>
+        <div className="mt-4 flex gap-2">
+          <PlayButton onClick={() => void launch(game.id)} disabled={running} label={running ? 'Running' : 'Play'} />
+          <Button variant="secondary" className="h-10 backdrop-blur-md" icon={<Layers className="size-4" />} onClick={() => navigate({ name: 'game', gameId: game.id })}>
             Manage mods
           </Button>
         </div>
@@ -167,11 +172,11 @@ export function LibraryPage() {
   ]
 
   return (
-    <div className="h-full overflow-y-auto px-8 pt-4 pb-10">
-      <div className="mb-6 flex items-end justify-between gap-4">
+    <div className="h-full overflow-y-auto px-8 pt-5 pb-10">
+      <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight text-ink-100">Library</h1>
-          <p className="mt-0.5 text-[13.5px] text-ink-300">
+          <h1 className="text-[24px] font-semibold tracking-tight text-ink-100">Library</h1>
+          <p className="mt-0.5 text-[13px] text-ink-400">
             {visible.length} game{visible.length === 1 ? '' : 's'} across {platforms.length || 0} source{platforms.length === 1 ? '' : 's'}
             {moddable > 0 && ` · ${moddable} with mod support · ${modded} modded`}
           </p>
@@ -188,16 +193,16 @@ export function LibraryPage() {
 
       {recent && filter === 'all' && !query && <ContinuePlaying game={recent} />}
 
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <SearchInput value={query} onChange={setQuery} placeholder="Search your library" className="w-72" />
-        <div className="flex flex-wrap gap-1.5">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <SearchInput value={query} onChange={setQuery} placeholder="Search your library" className="w-64" />
+        <div className="flex flex-wrap rounded-[10px] bg-white/[0.04] p-0.5">
           {chips.map((c) => (
             <button
               key={c.value}
               onClick={() => setFilter(c.value)}
               className={cn(
-                'h-8 rounded-full border px-3.5 text-[12.5px] font-medium transition-all',
-                filter === c.value ? 'border-white/20 bg-white/[0.1] text-ink-100' : 'border-white/[0.06] text-ink-300 hover:border-white/[0.12] hover:text-ink-100'
+                'h-8 rounded-lg px-3 text-[12.5px] font-medium transition-colors',
+                filter === c.value ? 'bg-white/[0.09] text-ink-100 shadow-[0_1px_2px_rgba(0,0,0,0.4)]' : 'text-ink-400 hover:text-ink-200'
               )}
             >
               {c.label}
@@ -220,13 +225,13 @@ export function LibraryPage() {
       </div>
 
       {!loaded ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-4">
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="skeleton aspect-[2/3] rounded-2xl" />
+            <div key={i} className="skeleton aspect-[2/3] rounded-xl" />
           ))}
         </div>
       ) : list.length ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] gap-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-4">
           {list.map((g, i) => (
             <GameCard key={g.id} game={g} mods={counts[g.id] ?? 0} info={detected[g.id]} running={running.includes(g.id)} index={i} />
           ))}

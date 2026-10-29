@@ -6,18 +6,18 @@
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', monospace;
 
-  /* Near-black neutrals with only a breath of blue; surfaces separate by depth, not by color. */
-  --color-ink-950: #030405;
-  --color-ink-900: #07080a;
-  --color-ink-850: #0a0b0d;
-  --color-ink-800: #0e0f12;
-  --color-ink-700: #15161a;
-  --color-ink-600: #1e1f24;
-  --color-ink-500: #2d2f35;
-  --color-ink-400: #575a63;
-  --color-ink-300: #8c8f98;
-  --color-ink-200: #babcc4;
-  --color-ink-100: #e4e5e9;
+  /* Neutral near-blacks; surfaces separate by a step in lightness and a hairline, not by color. */
+  --color-ink-950: #070709;
+  --color-ink-900: #0b0c0e;
+  --color-ink-850: #0e0f11;
+  --color-ink-800: #121315;
+  --color-ink-700: #18191c;
+  --color-ink-600: #212226;
+  --color-ink-500: #34363c;
+  --color-ink-400: #61646d;
+  --color-ink-300: #8f929b;
+  --color-ink-200: #bdbfc6;
+  --color-ink-100: #ececef;
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --animate-shimmer: shimmer 1.6s linear infinite;
@@ -79,41 +79,38 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Barely-there light behind everything, so the black has depth without a colored glow. */
+/* Flat near-black behind everything; the content panel sits on it as one calm surface. */
 .app-backdrop {
-  background:
-    radial-gradient(1200px 600px at 12% -10%, color-mix(in oklab, var(--nf-accent) 5%, transparent), transparent 60%),
-    radial-gradient(900px 700px at 100% 120%, rgb(255 255 255 / 0.018), transparent 60%),
-    #030405;
+  background: #070709;
 }
 
-.noise::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+.content-panel {
+  background: linear-gradient(180deg, #0e0f11, #0b0c0e 320px);
+  border-top: 1px solid rgb(255 255 255 / 0.05);
+  border-left: 1px solid rgb(255 255 255 / 0.05);
 }
 
+/* Cards and panels: a faint lift and a hairline, no glow. */
 @utility glass {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.032), rgb(255 255 255 / 0.014));
-  backdrop-filter: blur(22px) saturate(120%);
+  background: rgb(255 255 255 / 0.022);
   border: 1px solid rgb(255 255 255 / 0.055);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.035),
-    0 12px 40px -14px rgb(0 0 0 / 0.8);
 }
 
+/* Floating layers (dialogs, menus, toasts): solid, so text over art stays readable. */
 @utility glass-strong {
-  background: linear-gradient(180deg, rgb(15 16 19 / 0.94), rgb(9 10 12 / 0.96));
-  backdrop-filter: blur(28px) saturate(120%);
-  border: 1px solid rgb(255 255 255 / 0.07);
+  background: #111214;
+  border: 1px solid rgb(255 255 255 / 0.08);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.04),
-    0 30px 80px -20px rgb(0 0 0 / 0.85);
+    0 1px 0 rgb(255 255 255 / 0.03) inset,
+    0 24px 64px -16px rgb(0 0 0 / 0.75);
 }
 
+/* Over cover art: a frosted chip. */
+@utility frost {
+  background: rgb(10 10 12 / 0.55);
+  backdrop-filter: blur(14px) saturate(130%);
+  border: 1px solid rgb(255 255 255 / 0.08);
+}
 @utility drag {
   -webkit-app-region: drag;
 }
@@ -121,17 +118,21 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Filled controls and icon tiles: a dark surface with a faint tint of the accent. */
+/* Icon tiles and selected segments: a neutral surface with a faint tint of the accent. */
 @utility accent-gradient {
-  background-image: linear-gradient(180deg, color-mix(in oklab, var(--nf-accent) 15%, #1a1b1f), color-mix(in oklab, var(--nf-accent) 7%, #111215));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  background-color: color-mix(in oklab, var(--nf-accent) 9%, rgb(255 255 255 / 0.07));
 }
 
-/* Thin indicators (active nav item, tab underline, progress): the muted accent itself. */
+/* Thin indicators (tab underline, progress, toggles): the accent, lifted towards white. */
 @utility accent-line {
-  background-color: color-mix(in oklab, var(--nf-accent) 80%, #000);
+  background-color: color-mix(in oklab, var(--nf-accent) 55%, #f2f3f5);
 }
 
+/* The one strong action on a screen: light on dark. */
+@utility btn-light {
+  background-color: color-mix(in oklab, var(--nf-accent) 14%, #eef0f3);
+  color: #0a0a0c;
+}
 @utility text-gradient {
   background-image: linear-gradient(120deg, #fff 10%, color-mix(in oklab, var(--nf-accent) 45%, #fff));
   -webkit-background-clip: text;

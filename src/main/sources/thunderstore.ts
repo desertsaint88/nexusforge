@@ -115,6 +115,7 @@ export function createThunderstoreAdapter(ctx: AdapterContext): ModSourceAdapter
     sortLabels: { endorsed: 'Top rated', downloads: 'Most downloaded', newest: 'Newest', updated: 'Last updated' },
 
     paged: true,
+    pageSize: 48,
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const c = await community(gameId)

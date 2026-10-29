@@ -22,6 +22,16 @@ export interface ModSourceAdapter {
   querySorts?: ModSort[]
   /** `search` honours `opts.page` (0-based) for the site's further pages (an empty page ends the list). */
   paged?: boolean
+  /** Results per full page; a shorter page is the last one. Leave unset if pages can come back short (filtered). */
+  pageSize?: number
+  /**
+   * Time-limited orders and the windows the site can show them for, in days (0 = all time), the site's own
+   * default first. `search` gets the one to use as `opts.windowDays`; NexusForge looks further back when the
+   * default window holds only a few mods.
+   */
+  windows?: Partial<Record<ModSort, number[]>>
+  /** Orders that leave mods out (only rated ones, say), and the order the rest follow in when the list is short. */
+  fills?: Partial<Record<ModSort, ModSort>>
   description?: string
   homepage?: string
   /** Shown as the label of the per-game binding field ("Thunderstore community"). */

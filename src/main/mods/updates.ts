@@ -6,6 +6,7 @@ import type { ModUpdate } from '@shared/types'
 import { newerVersion } from './update-match'
 import { listMods } from './manager'
 import { sourceDetails } from '../sources/registry'
+import { FRAMEWORKS_ID, isFrameworkId } from '../sources/frameworks'
 import { scoped } from '../logger'
 
 const log = scoped('updates')
@@ -27,7 +28,10 @@ export function checkUpdates(gameId: string, force = false): Promise<ModUpdate[]
   const pending = running.get(gameId)
   if (pending) return pending
   const job = (async () => {
-    const mods = listMods(gameId).filter((m) => m.source?.sourceId && m.source.modId && !m.source.sourceId.startsWith('feed:'))
+    // Loaders installed by an integration from elsewhere (Script Hook V) get their updates in the game's Setup panel.
+    const mods = listMods(gameId).filter(
+      (m) => m.source?.sourceId && m.source.modId && !m.source.sourceId.startsWith('feed:') && !(m.source.sourceId === FRAMEWORKS_ID && !isFrameworkId(m.source.modId))
+    )
     const found = await inBatches(mods, 4, async (mod): Promise<ModUpdate | undefined> => {
       try {
         const details = await sourceDetails(mod.source!.sourceId, mod.source!.modId, gameId)

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowDownWideNarrow, ChevronsDown, CircleAlert, CircleCheck, Compass, Download, Gamepad2, KeyRound, LogIn, Settings, ThumbsUp, Clock, Info } from 'lucide-react'
 import { accountForSource, ensureSignedIn } from '../store/accounts'
-import type { InstalledMod, ModSearchResult, ModSort, SourceGameBinding, SourceInfo } from '@shared/types'
+import type { InstalledMod, ModSearchResponse, ModSearchResult, ModSort, SourceGameBinding, SourceInfo } from '@shared/types'
 import { SORT_LABEL } from '@shared/sort'
 import { installedIndex, isInstalled } from '@shared/installed'
 import { invoke, on } from '../lib/api'
@@ -18,41 +18,45 @@ import { ModDetailsModal } from '../modals/ModDetailsModal'
 const SORTS: ModSort[] = ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated']
 const SORT_KEY = 'nf.browse.sort'
 
+/** "the last 7 days", "the last year", "all time" */
+function span(days: number): string {
+  if (!days) return 'all time'
+  if (days % 365 === 0) return days === 365 ? 'the last year' : `the last ${days / 365} years`
+  return `the last ${days} days`
+}
+
 function ResultCard({ mod, index, installed, onOpen }: { mod: ModSearchResult; index: number; installed: boolean; onOpen(): void }) {
   const [failed, setFailed] = useState(false)
   return (
     <motion.button
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index, 20) * 0.02, type: 'spring', stiffness: 260, damping: 26 }}
+      transition={{ delay: Math.min(index, 16) * 0.015, duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       onClick={onOpen}
-      className={cn(
-        'group glass flex flex-col overflow-hidden rounded-2xl text-left transition-all duration-300 hover:-translate-y-0.5 hover:border-white/[0.13] hover:shadow-[0_20px_50px_-15px_rgba(0,0,0,0.95)]',
-        installed && 'border-emerald-300/[0.14]'
-      )}
+      className="group flex flex-col overflow-hidden rounded-xl border border-white/[0.055] bg-white/[0.022] text-left transition-colors duration-200 hover:border-white/[0.11] hover:bg-white/[0.04]"
     >
       <div className="relative aspect-[16/9] overflow-hidden bg-ink-850">
         {installed && (
-          <span className="absolute top-2 left-2 z-10 inline-flex h-5.5 items-center gap-1 rounded-md border border-emerald-300/20 bg-black/70 px-1.5 text-[11px] font-semibold text-emerald-200 backdrop-blur-md">
+          <span className="frost absolute top-2 left-2 z-10 inline-flex h-5.5 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-emerald-200">
             <CircleCheck className="size-3" /> Installed
           </span>
         )}
         {mod.thumbnail && !failed ? (
           <>
-            <img src={mod.thumbnail} alt="" onError={() => setFailed(true)} className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-xl" draggable={false} />
-            <img src={mod.thumbnail} alt="" onError={() => setFailed(true)} loading="lazy" className="relative size-full object-contain transition-transform duration-500 group-hover:scale-[1.04]" draggable={false} />
+            <img src={mod.thumbnail} alt="" onError={() => setFailed(true)} className="absolute inset-0 size-full scale-110 object-cover opacity-30 blur-xl" draggable={false} />
+            <img src={mod.thumbnail} alt="" onError={() => setFailed(true)} loading="lazy" className="relative size-full object-contain transition-transform duration-500 group-hover:scale-[1.03]" draggable={false} />
           </>
         ) : (
           <div className="flex size-full items-center justify-center text-ink-500">
-            <Compass className="size-8" />
+            <Compass className="size-7" />
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col p-4">
-        <div className="line-clamp-1 text-[14px] font-semibold text-ink-100">{mod.name}</div>
+      <div className="flex flex-1 flex-col px-3.5 pt-3 pb-3">
+        <div className="line-clamp-1 text-[13.5px] font-semibold text-ink-100">{mod.name}</div>
         {mod.author && <div className="mt-0.5 truncate text-[12px] text-ink-400">by {mod.author}</div>}
-        <p className="mt-2 line-clamp-2 flex-1 text-[12.5px] leading-relaxed text-ink-300">{mod.summary}</p>
-        <div className="mt-3 flex items-center gap-3 text-[11.5px] text-ink-400">
+        <p className="mt-1.5 line-clamp-2 flex-1 text-[12.5px] leading-relaxed text-ink-300">{mod.summary}</p>
+        <div className="mt-2.5 flex items-center gap-3 text-[11.5px] text-ink-400 tabular-nums">
           {mod.downloads !== undefined && (
             <span className="flex items-center gap-1">
               <Download className="size-3" /> {formatCount(mod.downloads)}
@@ -82,6 +86,8 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const [gameId, setGameId] = useState<string | undefined>(initialGame ?? [...games].sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))[0]?.id)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ModSearchResult[] | undefined>()
+  // How the first page was put together (window looked back over, completed with another order); "Load more" continues it.
+  const [shape, setShape] = useState<Omit<ModSearchResponse, 'results'> | undefined>()
   const [error, setError] = useState<string | undefined>()
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState<ModSearchResult | undefined>()
@@ -90,9 +96,9 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
     const saved = localStorage.getItem(SORT_KEY) as ModSort | null
     return saved && SORTS.includes(saved) ? saved : 'endorsed'
   })
-  const [approximate, setApproximate] = useState(false)
   const [installedOnly, setInstalledOnly] = useState(false)
   const seq = useRef(0)
+  const listOf = useRef('')
   const chooseSort = (s: ModSort) => {
     setSortPref(s)
     localStorage.setItem(SORT_KEY, s)
@@ -144,7 +150,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
     const mySeq = seq.current
     setLoadingMore(true)
     try {
-      const r = await invoke('sources:query', sourceId, query, gameId, { sort, page: page + 1 })
+      const r = await invoke('sources:query', sourceId, query, gameId, { sort, page: page + 1, windowDays: shape?.windowDays, fillSort: shape?.filled?.sort })
       if (mySeq !== seq.current) return
       const have = new Set((results ?? []).map((x) => x.id))
       const fresh = r.results.filter((x) => !have.has(x.id))
@@ -158,10 +164,17 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
     }
   }
 
-  // Debounced search; stale responses are dropped.
+  // Debounced search; stale responses are dropped. Another game or source starts from an empty grid, so its
+  // list never shows the previous one's mods (or their "Installed" marks) while it loads.
   useEffect(() => {
     if (!sourceId) return
     const mySeq = ++seq.current
+    const list = `${sourceId}|${gameId ?? ''}`
+    if (listOf.current !== list) {
+      listOf.current = list
+      setResults(undefined)
+      setShape(undefined)
+    }
     setLoading(true)
     setError(undefined)
     setPage(0)
@@ -169,15 +182,16 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
     const t = setTimeout(
       () => {
         invoke('sources:query', sourceId, query, gameId, { sort })
-          .then((r) => {
+          .then(({ results: list, ...rest }) => {
             if (mySeq !== seq.current) return
-            setResults(r.results)
-            setApproximate(Boolean(r.approximate))
-            setMore(Boolean(r.more))
+            setResults(list)
+            setShape(rest)
+            setMore(Boolean(rest.more))
           })
           .catch((err: Error) => {
             if (mySeq !== seq.current) return
             setResults([])
+            setShape(undefined)
             setError(err.message)
           })
           .finally(() => mySeq === seq.current && setLoading(false))
@@ -206,42 +220,67 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
   const shownResults = useMemo(() => (results && installedOnly ? results.filter((r) => isInstalled(index, r)) : results), [results, installedOnly, index])
   const installedHere = useMemo(() => (results ?? []).filter((r) => isInstalled(index, r)).length, [results, index])
   const sortOptions = available.map((s) => ({ value: s, label: SORT_LABEL[s], hint: source?.sortLabels?.[s] }))
-  const siteSortName = source?.sortLabels?.[sort]
+  const siteName = source?.name ?? 'the site'
+  const siteSortName = (s: ModSort) => source?.sortLabels?.[s] ?? SORT_LABEL[s]
+  const forGame = game ? ` for ${game.name}` : ''
+
+  // One line above the list that says whose order this is, and how a short list was completed.
+  const listNote = (() => {
+    if (!shape || shape.sort !== sort || !results?.length) return undefined
+    if (shape.approximate) return `${siteName} can't list mods by “${SORT_LABEL[sort]}” itself, so NexusForge sorted the mods it returned.`
+    if (shape.widenedFrom) {
+      const { days, count } = shape.widenedFrom
+      const few = count === 0 ? 'No mods' : count === 1 ? 'Only 1 mod' : `Only ${count} mods`
+      return `${few} on ${siteName}${forGame} ${count === 1 ? 'is' : 'are'} from ${span(days)}, so this list covers ${span(shape.windowDays ?? 0)}, in ${siteName}${siteName.endsWith('s') ? "'" : "'s"} own order.`
+    }
+    if (shape.filled) {
+      const { count, sort: rest } = shape.filled
+      return count
+        ? `${siteName} lists only ${count === 1 ? '1 mod' : `${count} mods`}${forGame} under “${siteSortName(sort)}”; the rest follow in its “${siteSortName(rest)}” order.`
+        : `${siteName} lists no mods${forGame} under “${siteSortName(sort)}” yet, so this is its “${siteSortName(rest)}” order.`
+    }
+    return source?.sortLabels?.[sort] ? `Same order as ${siteName} itself: “${source.sortLabels[sort]}”.` : undefined
+  })()
 
   const gameOptions = useMemo(() => games.map((g) => ({ value: g.id, label: g.name, icon: <GameIcon game={g} className="size-5 rounded" /> })), [games])
   const needsBinding = error && /choose|community|game domain|pick a game/i.test(error)
+  // The game simply isn't on this site ("Modrinth only has Minecraft mods"); trying again won't change that.
+  const wrongSite = Boolean(error && /only has/i.test(error))
+  // Errors come as "Modrinth: …"; the selected tab already says which site.
+  const errorText = error && source ? error.replace(`${source.name}: `, '') : error
 
   return (
-    <div className="h-full overflow-y-auto px-8 pt-4 pb-10">
-      <div className="mb-6 flex items-end justify-between gap-4">
+    <div className="h-full overflow-y-auto px-8 pt-5 pb-10">
+      <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight text-ink-100">Browse mods</h1>
-          <p className="mt-0.5 text-[13.5px] text-ink-300">Search any connected source and install straight into a game.</p>
+          <h1 className="text-[24px] font-semibold tracking-tight text-ink-100">Browse mods</h1>
+          <p className="mt-0.5 text-[13px] text-ink-400">Search any connected source and install straight into a game.</p>
         </div>
-        <Select value={gameId} width={320} className="w-[300px]" icon={<Gamepad2 className="size-4" />} placeholder="Choose a game" options={gameOptions} onChange={setGameId} />
+        <Select value={gameId} width={320} className="w-[280px]" icon={<Gamepad2 className="size-4" />} placeholder="Choose a game" options={gameOptions} onChange={setGameId} />
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div className="glass flex flex-wrap rounded-2xl p-1">
-          {sources.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setSourceId(s.id)}
-              className={cn('relative h-9 rounded-xl px-4 text-[13px] font-medium transition-colors', sourceId === s.id ? 'text-white' : 'text-ink-300 hover:text-ink-100')}
-            >
-              {sourceId === s.id && <motion.span layoutId="source-pill" className="accent-gradient absolute inset-0 rounded-xl border border-white/[0.1]" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
-              <span className="relative">{s.name}</span>
-            </button>
-          ))}
-        </div>
-        <SearchInput value={query} onChange={setQuery} placeholder={source ? `Search ${source.name}${game ? ` for ${game.name}` : ''}` : 'Search'} className="min-w-[280px] flex-1" />
-        <Select<ModSort> value={sort} width={340} className="w-[230px]" icon={<ArrowDownWideNarrow className="size-4" />} options={sortOptions} onChange={chooseSort} />
+      <div className="mb-3 flex flex-wrap rounded-[10px] bg-white/[0.04] p-0.5">
+        {sources.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setSourceId(s.id)}
+            className={cn('relative h-8 rounded-lg px-3.5 text-[13px] font-medium transition-colors', sourceId === s.id ? 'text-ink-100' : 'text-ink-400 hover:text-ink-200')}
+          >
+            {sourceId === s.id && <motion.span layoutId="source-pill" className="absolute inset-0 rounded-lg bg-white/[0.09] shadow-[0_1px_2px_rgba(0,0,0,0.4)]" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+            <span className="relative">{s.name}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <SearchInput value={query} onChange={setQuery} placeholder={source ? `Search ${source.name}${forGame}` : 'Search'} className="min-w-[280px] flex-1" />
+        <Select<ModSort> value={sort} width={340} className="w-[220px]" icon={<ArrowDownWideNarrow className="size-4" />} options={sortOptions} onChange={chooseSort} />
         <button
           onClick={() => setInstalledOnly(!installedOnly)}
           disabled={!gameId}
           className={cn(
-            'flex h-9.5 items-center gap-1.5 rounded-xl border px-3 text-[12.5px] font-medium transition-colors disabled:opacity-40',
-            installedOnly ? 'border-emerald-300/25 bg-emerald-400/[0.08] text-emerald-100' : 'border-white/[0.08] text-ink-300 hover:border-white/[0.14] hover:text-ink-100'
+            'flex h-9 items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] font-medium transition-colors disabled:opacity-40',
+            installedOnly ? 'bg-emerald-400/[0.12] text-emerald-200' : 'bg-white/[0.04] text-ink-300 hover:bg-white/[0.07] hover:text-ink-100'
           )}
           title="Only mods that are already installed in this game"
         >
@@ -250,7 +289,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
       </div>
 
       {source?.bindingLabel && game && (
-        <div className="-mt-2 mb-4 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-300">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-400">
           <span>
             {source.name} lists {game.name} as
           </span>
@@ -273,20 +312,20 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
         </div>
       )}
 
-      {source?.description && !error && <p className="mb-3 text-[12.5px] text-ink-400">{source.description}</p>}
-      {!error && results && results.length > 0 && (approximate || siteSortName) ? (
-        <p className="mb-5 flex items-center gap-1.5 text-[12px] text-ink-400">
-          <Info className="size-3.5" />
-          {approximate
-            ? `${source?.name ?? 'This source'} can't list mods by “${SORT_LABEL[sort]}” itself, so NexusForge sorted the mods it returned.`
-            : `Same order as ${source?.name ?? 'the site'} itself: “${siteSortName}”.`}
-        </p>
-      ) : (
-        <div className="mb-2" />
+      {!error && (source?.description || listNote) && (
+        <div className="mb-4 space-y-1 text-[12px] leading-relaxed text-ink-400">
+          {source?.description && <p>{source.description}</p>}
+          {listNote && (
+            <p className="flex items-start gap-1.5 text-ink-300">
+              <Info className="mt-[3px] size-3.5 shrink-0 text-ink-400" />
+              {listNote}
+            </p>
+          )}
+        </div>
       )}
 
       {error ? (
-        <EmptyState icon={<CircleAlert />} title="This source can't search right now" message={error}>
+        <EmptyState icon={wrongSite ? <Compass /> : <CircleAlert />} title={wrongSite ? `${game?.name ?? 'This game'} isn't on ${siteName}` : "This source can't search right now"} message={errorText}>
           {needsBinding && game && (
             <Button variant="primary" icon={<Settings className="size-4" />} onClick={() => navigate({ name: 'game', gameId: game.id, tab: 'settings' })}>
               Open {game.name} settings
@@ -308,16 +347,17 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
               Accounts
             </Button>
           )}
+          {!needsBinding && !wrongSite && !/api key/i.test(error) && <Button onClick={() => setAttempt((n) => n + 1)}>Try again</Button>}
         </EmptyState>
       ) : loading && !results?.length ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="skeleton h-[290px] rounded-2xl" />
+            <div key={i} className="skeleton h-[272px] rounded-xl" />
           ))}
         </div>
       ) : shownResults && shownResults.length ? (
         <>
-          <div className={cn('grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4 transition-opacity', loading && 'opacity-60')}>
+          <div className={cn('grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5 transition-opacity', loading && 'opacity-50')}>
             {shownResults.map((r, i) => (
               <ResultCard key={`${r.sourceId}:${r.id}`} mod={r} index={i % 48} installed={isInstalled(index, r)} onOpen={() => setOpen(r)} />
             ))}
@@ -327,7 +367,7 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
               <Button icon={<ChevronsDown className="size-4" />} loading={loadingMore} onClick={() => void loadMore()} className="min-w-[200px]">
                 {loadingMore ? 'Loading…' : 'Load more'}
               </Button>
-              <span className="text-[11.5px] text-ink-500">{results?.length ?? 0} mods shown, in {source?.name ?? 'the site'}'s order</span>
+              <span className="text-[11.5px] text-ink-500">{results?.length ?? 0} mods shown</span>
             </div>
           )}
         </>
@@ -341,10 +381,8 @@ export function BrowsePage({ gameId: initialGame, sourceId: initialSource }: { g
           title="Nothing found"
           message={
             query
-              ? `No mods on ${source?.name ?? 'this source'} match "${query}".`
-              : sort === 'trending' || sort === 'downloads_recent'
-                ? `${source?.name ?? 'This source'} lists nothing under “${siteSortName ?? SORT_LABEL[sort]}” for ${game?.name ?? 'this game'} right now (no new mods in that time). Try “${SORT_LABEL.endorsed}”.`
-                : `${source?.name ?? 'This source'} has no mods for ${game?.name ?? 'this game'}${source?.bindingLabel ? `, or it lists the game under a different name. You can pick the right ${source.bindingLabel.toLowerCase()} in the game's settings` : ''}.`
+              ? `No mods on ${siteName} match "${query}".`
+              : `${source?.name ?? 'This source'} has no mods for ${game?.name ?? 'this game'}${source?.bindingLabel ? `, or it lists the game under a different name. You can pick the right ${source.bindingLabel.toLowerCase()} in the game's settings` : ''}.`
           }
         >
           {source?.bindingLabel && game && (

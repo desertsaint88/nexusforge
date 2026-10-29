@@ -248,7 +248,9 @@ export function registerIpc(rendererUrl: string): void {
   handle('sources:query', (_e, id, q, gameId, opts) =>
     sources.querySource(str(id, 'source'), String(q ?? ''), gameId || undefined, {
       sort: modSort(opts?.sort),
-      page: Number.isInteger(opts?.page) && opts!.page! >= 0 && opts!.page! < 200 ? opts!.page : undefined
+      page: Number.isInteger(opts?.page) && opts!.page! >= 0 && opts!.page! < 200 ? opts!.page : undefined,
+      windowDays: Number.isInteger(opts?.windowDays) && opts!.windowDays! >= 0 && opts!.windowDays! <= 3650 ? opts!.windowDays : undefined,
+      fillSort: opts?.fillSort ? modSort(opts.fillSort) : undefined
     })
   )
   handle('sources:details', (_e, id, modId, gameId) => sources.sourceDetails(str(id, 'source'), str(modId, 'mod'), gameId || undefined))

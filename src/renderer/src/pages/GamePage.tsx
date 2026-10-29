@@ -16,13 +16,14 @@ import { ProfilesTab } from './game/ProfilesTab'
 import { GameSettingsTab } from './game/GameSettingsTab'
 import { DiagnoseTab } from './game/DiagnoseTab'
 
+/** One cell of the stats strip under the header. */
 function Stat({ icon, label, value, tone }: { icon: ReactNode; label: string; value: ReactNode; tone?: 'ok' | 'warn' }) {
   return (
-    <div className="glass flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-4 py-3">
-      <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-ink-200 [&>svg]:size-4.5', tone === 'ok' && 'bg-emerald-500/15 text-emerald-300', tone === 'warn' && 'bg-amber-500/15 text-amber-300')}>{icon}</div>
+    <div className="flex min-w-0 flex-1 items-center gap-2.5 px-4 py-2.5">
+      <div className={cn('shrink-0 text-ink-400 [&>svg]:size-4', tone === 'ok' && 'text-emerald-300', tone === 'warn' && 'text-amber-300')}>{icon}</div>
       <div className="min-w-0">
-        <div className="text-[11px] font-semibold tracking-[0.1em] text-ink-400 uppercase">{label}</div>
-        <div className="truncate text-[14px] font-semibold text-ink-100">{value}</div>
+        <div className="text-[11px] text-ink-400">{label}</div>
+        <div className="truncate text-[13px] font-medium text-ink-100">{value}</div>
       </div>
     </div>
   )
@@ -104,8 +105,8 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
     <div className="relative h-full overflow-y-auto">
       <Hero game={game} running={running} onLaunch={(variant) => void launch(game.id, variant)} onFavorite={() => void update(game.id, { favorite: !game.favorite })} onSettings={() => setCurrent('settings')} />
 
-      <div className="relative -mt-6 px-8 pb-10">
-        <div className="mb-6 flex gap-3">
+      <div className="relative -mt-4 px-8 pb-10">
+        <div className="mb-5 flex divide-x divide-white/[0.05] rounded-xl border border-white/[0.055] bg-ink-850/90 backdrop-blur-md">
           <Stat icon={<Clock />} label="Playtime" value={formatPlaytime(game.playtimeMinutes)} />
           <Stat icon={<CalendarClock />} label="Last played" value={relativeTime(game.lastPlayed)} />
           <Stat
@@ -166,7 +167,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
           ]}
         />
 
-        <div className="pt-6">
+        <div className="pt-5">
           <AnimatePresence mode="wait">
             <motion.div key={current} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18 }}>
               {current === 'mods' && <ModsTab game={game} onShowConflicts={() => setCurrent('conflicts')} />}
@@ -204,53 +205,43 @@ function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game;
   const others = options.filter((o) => o !== primary && (o.available || o.id === 'modded'))
   return (
     // Shorter on short windows, so the mod list starts above the fold.
-    <div className="relative h-[clamp(250px,44vh,360px)] overflow-hidden">
-      <motion.div initial={{ scale: 1.08, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} className="absolute inset-0">
+    <div className="relative h-[clamp(220px,36vh,300px)] overflow-hidden">
+      <motion.div initial={{ scale: 1.05, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }} className="absolute inset-0">
         <HeroArt game={game} />
       </motion.div>
-      <div className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/55 to-ink-950/10" />
-      <div className="absolute inset-0 bg-gradient-to-r from-ink-950/80 via-transparent to-transparent" />
-      <div className="relative flex h-full flex-col justify-end px-8 pb-10 [@media(min-height:860px)]:pb-12">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, type: 'spring', stiffness: 200, damping: 24 }}>
-          <div className="mb-3 flex flex-wrap items-center gap-2 [@media(min-height:860px)]:mb-4">
+      <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/60 to-ink-900/10" />
+      <div className="absolute inset-0 bg-gradient-to-r from-ink-900/85 via-ink-900/20 to-transparent" />
+      <div className="relative flex h-full flex-col justify-end px-8 pb-9">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
+          <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
             <PlatformBadge platform={game.platform} />
             {game.sizeBytes ? (
-              <Badge className="bg-black/40 backdrop-blur-md">
+              <span className="frost inline-flex h-5.5 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-ink-200">
                 <HardDrive className="size-3" /> {formatBytes(game.sizeBytes)}
-              </Badge>
+              </span>
             ) : null}
-            {game.version && <Badge className="bg-black/40 font-mono backdrop-blur-md">v{game.version}</Badge>}
+            {game.version && <span className="frost inline-flex h-5.5 items-center rounded-md px-1.5 font-mono text-[11px] text-ink-200">v{game.version}</span>}
             {modInfo &&
               (modInfo.supported ? (
-                <Badge className="bg-black/40 backdrop-blur-md">
-                  <span title={modInfo.support.join('\n')} className="inline-flex items-center gap-1">
-                    <Wrench className="size-3" /> Mod support{modInfo.support[0] ? `: ${modInfo.support[0]}` : ''}
-                  </span>
-                </Badge>
+                <span title={modInfo.support.join('\n')} className="frost inline-flex h-5.5 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-ink-200">
+                  <Wrench className="size-3" /> {modInfo.support[0] ?? 'Mod support'}
+                </span>
               ) : (
-                <Badge className="bg-black/40 text-ink-400 backdrop-blur-md">
-                  <span title={modInfo.support.join('\n') || 'No mod loader, mod folder or known mod setup found'}>No known mod support</span>
-                </Badge>
+                <span title={modInfo.support.join('\n') || 'No mod loader, mod folder or known mod setup found'} className="frost inline-flex h-5.5 items-center rounded-md px-1.5 text-[11px] font-medium text-ink-400">
+                  No known mod support
+                </span>
               ))}
             {game.missing && <Badge tone="danger">Install folder missing</Badge>}
           </div>
-          <GameLogo game={game} />
-          <div className="mt-4 flex items-center gap-2 [@media(min-height:860px)]:mt-6">
-            <PlayButton
-              size="lg"
-              className="min-w-[170px]"
-              onClick={() => onLaunch(primary?.id)}
-              disabled={running || game.missing}
-              title={primary?.description}
-              label={running ? 'Running' : (primary?.label ?? 'Play')}
-            />
+          <GameLogo game={game} className="!max-h-[72px]" />
+          <div className="mt-4 flex items-center gap-1.5">
+            <PlayButton className="min-w-[140px]" onClick={() => onLaunch(primary?.id)} disabled={running || game.missing} title={primary?.description} label={running ? 'Running' : (primary?.label ?? 'Play')} />
             {!running &&
               others.map((o) => (
                 <Button
                   key={o.id}
-                  size="lg"
                   variant="outline"
-                  className="bg-black/40 backdrop-blur-md"
+                  className="frost h-10"
                   disabled={!o.available || game.missing}
                   title={o.available ? o.description : o.reason}
                   onClick={() => onLaunch(o.id)}
@@ -258,14 +249,14 @@ function Hero({ game, running, onLaunch, onFavorite, onSettings }: { game: Game;
                   {o.label}
                 </Button>
               ))}
-            <IconButton label={game.favorite ? 'Unfavorite' : 'Favorite'} onClick={onFavorite} className={cn('size-12 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md', game.favorite && 'text-amber-300')}>
-              <Star className={cn('size-5', game.favorite && 'fill-current')} />
+            <IconButton label={game.favorite ? 'Unfavorite' : 'Favorite'} onClick={onFavorite} className={cn('frost size-10 rounded-[10px]', game.favorite && 'text-amber-300')}>
+              <Star className={cn('size-4', game.favorite && 'fill-current')} />
             </IconButton>
-            <IconButton label="Open install folder" onClick={() => void invoke('app:openPath', game.installDir)} className="size-12 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md">
-              <FolderOpen className="size-5" />
+            <IconButton label="Open install folder" onClick={() => void invoke('app:openPath', game.installDir)} className="frost size-10 rounded-[10px]">
+              <FolderOpen className="size-4" />
             </IconButton>
-            <IconButton label="Game settings" onClick={onSettings} className="size-12 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md">
-              <Settings className="size-5" />
+            <IconButton label="Game settings" onClick={onSettings} className="frost size-10 rounded-[10px]">
+              <Settings className="size-4" />
             </IconButton>
           </div>
         </motion.div>

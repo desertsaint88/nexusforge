@@ -112,24 +112,27 @@ export function createSteamWorkshopAdapter(ctx: AdapterContext): ModSourceAdapte
     },
 
     paged: true,
+    // Steam's "Most popular" (trend) over a window: a week for trending, a month for recent downloads; the page
+    // offers 1, 7, 30, 90, 180 and 365 days and all time (-1).
+    windows: { trending: [7, 30, 90, 365, 0], downloads_recent: [30, 90, 365, 0] },
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const app = await appId(gameId)
       const q = query.trim()
       const sort = opts?.sort ?? (q ? 'relevance' : 'downloads')
       const page = opts?.page ?? 0
-      const key = `${app}|${q.toLowerCase()}|${sort}|${page}`
+      const siteDays = sort === 'trending' ? 7 : sort === 'downloads_recent' ? 30 : -1
+      const days = siteDays === -1 ? -1 : opts?.windowDays === undefined ? siteDays : opts.windowDays || -1
+      const key = `${app}|${q.toLowerCase()}|${sort}|${days}|${page}`
       const hit = searchCache.get(key)
       if (hit && Date.now() - hit.at < 3 * 60_000) return hit.results
-      // Steam's "Most popular" (trend) over a window: a week for trending, a month for recent downloads, all time otherwise.
-      const [browsesort, days] =
-        sort === 'relevance' ? [q ? 'textsearch' : 'trend', -1]
-        : sort === 'endorsed' ? ['toprated', -1]
-        : sort === 'downloads' ? ['totaluniquesubscribers', -1]
-        : sort === 'downloads_recent' ? ['trend', 30]
-        : sort === 'trending' ? ['trend', 7]
-        : sort === 'newest' ? ['mostrecent', -1]
-        : ['lastupdated', -1]
+      const browsesort =
+        sort === 'relevance' ? (q ? 'textsearch' : 'trend')
+        : sort === 'endorsed' ? 'toprated'
+        : sort === 'downloads' ? 'totaluniquesubscribers'
+        : sort === 'downloads_recent' || sort === 'trending' ? 'trend'
+        : sort === 'newest' ? 'mostrecent'
+        : 'lastupdated'
       const url = `https://steamcommunity.com/workshop/browse/?appid=${app}&searchtext=${encodeURIComponent(q)}&browsesort=${browsesort}&section=readytouseitems&days=${days}&numperpage=30&p=${page + 1}`
       const html = await ctx.text(url)
       if (/too many requests/i.test(html)) throw new Error('Steam is rate limiting Workshop searches. Wait a minute and try again.')

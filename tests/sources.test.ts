@@ -7,11 +7,12 @@ import { parseDependency } from '../src/main/sources/thunderstore'
 import { parseRows } from '../src/main/sources/moddb'
 import { workshopBrowseIds } from '../src/main/sources/steamworkshop'
 import { nexusListing, parseNxm } from '../src/main/sources/nexus'
+import { completeListing } from '../src/main/sources/listing'
 import { placeInOrder } from '../src/main/mods/order'
 import { missingRequirements, supportsVersion } from '../src/shared/deps'
 import { extractGma, addonSlug } from '../src/main/steam/gma'
 import { isEngineBuildString, readExeVersion } from '../src/main/library/exe-version'
-import type { InstalledMod } from '../src/shared/types'
+import type { InstalledMod, ModSort } from '../src/shared/types'
 
 describe('game name matching', () => {
   it('drops demo/edition noise and tries shorter names', () => {
@@ -76,6 +77,70 @@ describe('Nexus mod lists', () => {
     expect(nexusListing('garrysmod', '', 'newest', now).s).toEqual([{ createdAt: { direction: 'DESC' } }])
     expect(nexusListing('garrysmod', '', 'updated', now).s).toEqual([{ updatedAt: { direction: 'DESC' } }])
     expect(nexusListing('garrysmod', 'car', 'relevance', now)).toMatchObject({ f: { name: [{ value: 'car', op: 'WILDCARD' }] }, s: [{ relevance: { direction: 'DESC' } }] })
+  })
+
+  it('looks further back when asked, and all the way with window 0', () => {
+    expect(nexusListing('garrysmod', '', 'trending', now, 90).f.createdAt).toEqual([{ value: String(1792926000 - 90 * 86400), op: 'GTE' }])
+    expect(nexusListing('garrysmod', '', 'trending', now, 0).f.createdAt).toBeUndefined()
+    expect(nexusListing('garrysmod', '', 'trending', now, 0).s).toEqual([{ endorsements: { direction: 'DESC' } }])
+    // Orders without a window ignore one.
+    expect(nexusListing('garrysmod', '', 'endorsed', now, 30).f.createdAt).toBeUndefined()
+  })
+})
+
+describe('short lists', () => {
+  const mods = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => ({ id: `${prefix}${i}`, sourceId: 'x', name: `${prefix}${i}`, summary: '' }))
+  // A site whose trending list has 2 mods in 7 days, 5 in 30, 25 in 90; and a rating list with 3 rated mods.
+  const site = (by: ModSort, page: number, days?: number) => {
+    if (by === 'trending') {
+      const n = days === 7 ? 2 : days === 30 ? 5 : days === 90 ? 25 : days === 0 ? 60 : 40
+      return { results: page ? mods(`t${days}-p${page}-`, 3) : mods(`t${days}-`, n), more: n >= 20 }
+    }
+    if (by === 'endorsed') return { results: mods('rated', 3), more: false }
+    if (by === 'downloads') return { results: page ? mods('dl-p1-', 30) : [...mods('rated', 2), ...mods('dl', 28)], more: true }
+    return { results: mods(by, 30), more: true }
+  }
+  const calls: string[] = []
+  const fetch = async (by: ModSort, page: number, days?: number) => (calls.push(`${by}/${page}/${days ?? '-'}`), site(by, page, days))
+
+  beforeEach(() => {
+    calls.length = 0
+  })
+
+  it('looks further back until a time-limited list is full, and says from where', async () => {
+    const r = await completeListing({ sort: 'trending', page: 0, windows: [7, 30, 90, 365, 0], fetch })
+    expect(r.results).toHaveLength(25)
+    expect(r.windowDays).toBe(90)
+    expect(r.widenedFrom).toEqual({ days: 7, count: 2 })
+    expect(calls).toEqual(['trending/0/7', 'trending/0/30', 'trending/0/90'])
+    // "Load more" stays in that window.
+    const next = await completeListing({ sort: 'trending', page: 1, windows: [7, 30, 90, 365, 0], windowDays: 90, fetch })
+    expect(next.results[0].id).toBe('t90-p1-0')
+  })
+
+  it("keeps the site's own window when it is full", async () => {
+    const r = await completeListing({ sort: 'trending', page: 0, windows: [365, 0], fetch })
+    expect(r.windowDays).toBe(365)
+    expect(r.widenedFrom).toBeUndefined()
+    expect(calls).toEqual(['trending/0/365'])
+  })
+
+  it('continues an order that leaves mods out with the rest, without repeats', async () => {
+    const r = await completeListing({ sort: 'endorsed', page: 0, fill: 'downloads', fetch })
+    expect(r.filled).toEqual({ sort: 'downloads', count: 3 })
+    expect(r.results.map((x) => x.id).slice(0, 4)).toEqual(['rated0', 'rated1', 'rated2', 'dl0'])
+    expect(new Set(r.results.map((x) => x.id)).size).toBe(r.results.length)
+    expect(r.more).toBe(true)
+    const next = await completeListing({ sort: 'endorsed', page: 1, fill: 'downloads', fillSort: 'downloads', fetch })
+    expect(next.results[0].id).toBe('dl-p1-0')
+    expect(next.sort).toBe('endorsed')
+  })
+
+  it('leaves full lists alone', async () => {
+    const r = await completeListing({ sort: 'newest', page: 0, fill: 'downloads', fetch })
+    expect(r.results).toHaveLength(30)
+    expect(r.filled).toBeUndefined()
+    expect(calls).toEqual(['newest/0/-'])
   })
 })
 

@@ -73,9 +73,10 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 700,
     frame: false,
     show: false,
-    backgroundColor: '#030405',
+    backgroundColor: '#070709',
     title: 'NexusForge',
-    icon: join(import.meta.dirname, '../../resources/icon.png'),
+    // The .ico has the small sizes drawn for their size (title bar, taskbar, Alt+Tab).
+    icon: join(import.meta.dirname, `../../resources/icon.${process.platform === 'win32' ? 'ico' : 'png'}`),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       sandbox: true,

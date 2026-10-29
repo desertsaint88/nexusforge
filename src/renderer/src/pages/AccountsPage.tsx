@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CircleCheck, Globe, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react'
+import { CircleCheck, Globe, KeyRound, LogIn, LogOut, ShieldCheck, UserPlus } from 'lucide-react'
 import type { AccountInfo } from '@shared/types'
 import { invoke, on } from '../lib/api'
 import { cn } from '../lib/format'
@@ -240,16 +240,11 @@ export function AccountsPage() {
   const web = accounts.filter((a) => a.web)
   const steam = accounts.find((a) => a.id === 'steam')
   return (
-    <div className="h-full overflow-y-auto px-8 pt-6 pb-10">
+    <div className="h-full overflow-y-auto px-8 pt-5 pb-10">
       <div className="max-w-3xl">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="accent-gradient flex size-10 items-center justify-center rounded-xl text-white shadow-lg">
-            <UserRound className="size-5" />
-          </div>
-          <div>
-            <h1 className="text-[28px] leading-tight font-bold tracking-tight text-ink-100">Accounts</h1>
-            <p className="text-[13px] text-ink-400">Sign in once inside NexusForge; downloads from these sites then work right here, no browser needed.</p>
-          </div>
+        <div className="mb-5">
+          <h1 className="text-[24px] font-semibold tracking-tight text-ink-100">Accounts</h1>
+          <p className="mt-0.5 text-[13px] text-ink-400">Sign in once inside NexusForge; downloads from these sites then work right here, no browser needed.</p>
         </div>
         <motion.div className="space-y-3" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
           {web.map((a) => (

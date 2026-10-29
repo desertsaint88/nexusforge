@@ -63,14 +63,22 @@ export function parseNxm(url: string): { domain: string; modId: string; fileId: 
 /**
  * The filter and order nexusmods.com itself sends for a game's mod list (recorded from the site, 2026-10-25):
  * adult content hidden, and its "Trending mods" / "Popular mods" lists are endorsements / downloads among mods
- * published in the last 7 / 28 days, the window starting on the hour.
+ * published in the last 7 / 28 days, the window starting on the hour. `windowDays` looks further back (0 = all time).
  */
-export function nexusListing(domain: string, query: string, sort: ModSort, now = Date.now()): { f: Record<string, unknown>; s: Record<string, { direction: 'DESC' }>[] } {
+export const NEXUS_WINDOWS: Partial<Record<ModSort, number[]>> = { trending: [7, 30, 90, 365, 0], downloads_recent: [28, 90, 365, 0] }
+
+export function nexusListing(
+  domain: string,
+  query: string,
+  sort: ModSort,
+  now = Date.now(),
+  windowDays?: number
+): { f: Record<string, unknown>; s: Record<string, { direction: 'DESC' }>[] } {
   const f: Record<string, unknown> = { gameDomainName: [{ value: domain, op: 'EQUALS' }], adultContent: [{ value: false, op: 'EQUALS' }] }
   if (query) f.name = [{ value: query, op: 'WILDCARD' }]
   const hour = Math.floor(now / 3_600_000) * 3600
-  if (sort === 'trending') f.createdAt = [{ value: String(hour - 7 * 86400), op: 'GTE' }]
-  if (sort === 'downloads_recent') f.createdAt = [{ value: String(hour - 28 * 86400), op: 'GTE' }]
+  const days = NEXUS_WINDOWS[sort] ? (windowDays ?? NEXUS_WINDOWS[sort]![0]) : 0
+  if (days > 0) f.createdAt = [{ value: String(hour - days * 86400), op: 'GTE' }]
   const field =
     sort === 'downloads' || sort === 'downloads_recent' ? 'downloads'
     : sort === 'newest' ? 'createdAt'
@@ -158,6 +166,8 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
     },
 
     paged: true,
+    pageSize: 48,
+    windows: NEXUS_WINDOWS,
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const d = await domain(gameId)
@@ -168,7 +178,7 @@ export function createNexusAdapter(ctx: AdapterContext): ModSourceAdapter {
           `query($f: ModsFilter, $s: [ModsSort!], $o: Int){ mods(filter: $f, sort: $s, offset: $o, count: 48, viewUserBlockedContent: false) { nodes {
             modId name summary author version downloads endorsements thumbnailUrl pictureUrl createdAt updatedAt uploader { name } game { id domainName }
           } } }`,
-          { ...nexusListing(d, q, sort), o: (opts?.page ?? 0) * 48 }
+          { ...nexusListing(d, q, sort, Date.now(), opts?.windowDays), o: (opts?.page ?? 0) * 48 }
         )
       ).mods.nodes
       return nodes.map((m) => ({

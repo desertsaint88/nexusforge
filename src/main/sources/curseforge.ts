@@ -102,6 +102,7 @@ export function createCurseForgeAdapter(ctx: AdapterContext): ModSourceAdapter {
     sortLabels: { endorsed: 'Rating', downloads: 'Total Downloads', trending: 'Popularity', newest: 'Creation Date', updated: 'Last Updated' },
 
     paged: true,
+    pageSize: 48,
 
     async search(query, gameId, opts): Promise<ModSearchResult[]> {
       const g = await ctx.binding(gameId)

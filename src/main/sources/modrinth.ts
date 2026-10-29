@@ -56,8 +56,12 @@ export function createModrinthAdapter(ctx: AdapterContext): ModSourceAdapter {
     sortLabels: { endorsed: 'Follow count', downloads: 'Download count', newest: 'Recently published', updated: 'Recently updated' },
 
     paged: true,
+    pageSize: 40,
 
-    async search(query, _gameId, opts): Promise<ModSearchResult[]> {
+    async search(query, gameId, opts): Promise<ModSearchResult[]> {
+      // Everything on Modrinth is for Minecraft; listing it for GTA V or BeamNG.drive would offer mods that can't work there.
+      const game = gameId ? ctx.getGame(gameId) : undefined
+      if (game && !/minecraft/i.test(game.name)) throw new Error('Modrinth only has Minecraft mods, resource packs and shaders.')
       const INDEX: Partial<Record<ModSort, string>> = { relevance: 'relevance', endorsed: 'follows', downloads: 'downloads', newest: 'newest', updated: 'updated' }
       const index = INDEX[opts?.sort ?? (query ? 'relevance' : 'downloads')] ?? 'downloads'
       const res = await ctx.json<{ hits: Hit[] }>(`${API}/search?query=${encodeURIComponent(query)}&limit=40&offset=${(opts?.page ?? 0) * 40}&index=${index}`)

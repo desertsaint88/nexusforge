@@ -15,6 +15,7 @@ import type {
 import { sortResults } from '@shared/sort'
 import type { AdapterContext, DownloadPlan, ModSourceAdapter } from './types'
 import { httpJson, httpText } from './http'
+import { completeListing } from './listing'
 import { createThunderstoreAdapter } from './thunderstore'
 import { createNexusAdapter } from './nexus'
 import { createModrinthAdapter } from './modrinth'
@@ -172,9 +173,9 @@ export async function searchSource(id: string, query: string, gameId?: string): 
 }
 
 /**
- * Search in a given order. Orders the source has are passed through untouched, so the list is the site's own
- * (an empty "trending" list on a quiet game stays empty, like on the site). Only sources without that order
- * (plugins, feeds) get their results sorted here, and the response says so.
+ * Search in a given order. Orders the source has come in the site's own order, short lists completed (see
+ * completeListing); "Load more" passes `windowDays` / `fillSort` back, so further pages continue the same list.
+ * Only sources without that order (plugins, feeds) get their results sorted here (`approximate`).
  */
 export async function querySource(id: string, query: string, gameId?: string, opts: ModSearchOptions = {}): Promise<ModSearchResponse> {
   const adapter = adapterFor(id)
@@ -184,9 +185,22 @@ export async function querySource(id: string, query: string, gameId?: string, op
   // Further pages only exist for the site's own orders; a locally sorted list has no "next page".
   const page = Math.max(0, Math.floor(opts.page ?? 0))
   if (page && !(native && adapter.paged)) return { results: [], sort, approximate: !native || undefined, more: false }
-  const raw = await guarded(id, 'search', (a) => a.search(query, gameId, native ? { sort, page } : {}))
-  const results = raw.map((r) => ({ ...r, sourceId: id }))
-  return native ? { results, sort, more: Boolean(adapter.paged && results.length) } : { results: sortResults(results, sort), sort, approximate: true, more: false }
+  if (!native) {
+    const raw = await guarded(id, 'search', (a) => a.search(query, gameId, {}))
+    return { results: sortResults(raw.map((r) => ({ ...r, sourceId: id })), sort), sort, approximate: true, more: false }
+  }
+  return completeListing({
+    sort,
+    page,
+    windows: adapter.windows?.[sort],
+    fill: adapter.fills?.[sort],
+    windowDays: opts.windowDays,
+    fillSort: opts.fillSort,
+    async fetch(by, p, windowDays) {
+      const raw = await guarded(id, 'search', (a) => a.search(query, gameId, { sort: by, page: p, windowDays }))
+      return { results: raw.map((r) => ({ ...r, sourceId: id })), more: Boolean(adapter.paged && raw.length && (!adapter.pageSize || raw.length >= adapter.pageSize)) }
+    }
+  })
 }
 
 export async function sourceDetails(id: string, modId: string, gameId?: string): Promise<ModDetails> {

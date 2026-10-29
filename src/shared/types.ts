@@ -695,6 +695,13 @@ export interface ModSearchOptions {
   sort?: ModSort
   /** 0-based page of the site's list ("Load more"); only sources marked `paged` support it. */
   page?: number
+  /**
+   * Days a time-limited order (trending, popular right now) looks back, 0 = all time. Unset on the first page
+   * (NexusForge picks it, see `ModSearchResponse.windowDays`); "Load more" passes the first page's value back.
+   */
+  windowDays?: number
+  /** "Load more" of a list that was completed with another order (`ModSearchResponse.filled`): that order's next page. */
+  fillSort?: ModSort
 }
 
 export interface ModSearchResponse {
@@ -704,6 +711,12 @@ export interface ModSearchResponse {
   approximate?: boolean
   /** The site has more results on further pages. */
   more?: boolean
+  /** Time-limited orders: the days the list looks back (0 = all time). */
+  windowDays?: number
+  /** The site's own window held too few mods (`count` in `days`), so the list looks further back. */
+  widenedFrom?: { days: number; count: number }
+  /** The order only listed `count` mods (ModDB rates only mods with enough votes); the rest follow in order `sort`. */
+  filled?: { sort: ModSort; count: number }
 }
 
 /** A newer file for a mod installed through NexusForge. */

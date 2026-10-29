@@ -1,7 +1,7 @@
 {
   "name": "nexusforge",
   "productName": "NexusForge",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Universal game mod manager & launcher",
   "author": "NexusForge",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "icon": "electron scripts/make-icon.mjs",
+    "brand": "electron scripts/make-brand.mjs",
     "dist": "npm run build && electron-builder --win --publish never",
     "release": "npm run dist && node scripts/release.mjs",
     "dist:dir": "npm run build && electron-builder --win --dir --publish never"

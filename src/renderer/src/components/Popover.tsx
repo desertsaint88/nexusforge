@@ -63,7 +63,7 @@ export function Popover({
           {open && (
             <motion.div
               ref={panel}
-              className="glass-strong fixed z-[60] overflow-hidden rounded-2xl p-1.5"
+              className="glass-strong fixed z-[60] overflow-hidden rounded-xl p-1"
               style={{ top: pos.top, bottom: pos.bottom, left: pos.left, width, transformOrigin: pos.up ? 'bottom' : 'top' }}
               initial={{ opacity: 0, scale: 0.96, y: pos.up ? 6 : -6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -85,7 +85,7 @@ export function MenuItem({ icon, children, onClick, danger, active, hint }: { ic
     <button
       onClick={onClick}
       className={cn(
-        'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors',
+        'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors',
         danger ? 'text-rose-300 hover:bg-rose-500/12' : 'text-ink-200 hover:bg-white/[0.07] hover:text-ink-100',
         active && 'bg-white/[0.06] text-ink-100'
       )}
@@ -127,8 +127,8 @@ export function Select<T extends string>({
         <button
           onClick={toggle}
           className={cn(
-            'no-drag flex h-9.5 items-center gap-2 rounded-xl border border-white/[0.08] bg-black/25 px-3 text-left text-sm text-ink-100 transition-colors hover:bg-black/35',
-            open && 'border-[color-mix(in_oklab,var(--nf-accent)_55%,transparent)]',
+            'no-drag flex h-9 items-center gap-2 rounded-[10px] border border-white/[0.06] bg-white/[0.035] px-3 text-left text-[13px] text-ink-100 transition-colors hover:border-white/[0.1]',
+            open && 'border-white/[0.2] bg-white/[0.05]',
             className
           )}
         >

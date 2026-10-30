@@ -6,6 +6,7 @@ import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import { join } from 'node:path'
 import electronPath from 'electron'
+import { probeGames } from './local-config.mjs'
 
 const root = join(import.meta.dirname, '..')
 const base = join(root, '.smoke', 'loaders-ui')
@@ -25,7 +26,7 @@ page.on('pageerror', (e) => errors.push(e.message))
 await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setBounds({ width: 1500, height: 1000 }))
 const invoke = (c, ...a) => page.evaluate(([c, a]) => window.nexus.invoke(c, ...a), [c, a])
 
-const wanted = (process.env.GAMES ?? 'Ready or Not|Grand Theft Auto V|Cyberpunk2077|Rolla Demo|Backrooms: Escape Together').split('|')
+const wanted = probeGames('loaders', ['Grand Theft Auto V'])
 let games = []
 for (let i = 0; i < 90; i++) {
   games = await invoke('library:list')

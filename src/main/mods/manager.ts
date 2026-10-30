@@ -88,7 +88,15 @@ export interface GameContext {
 export const loaderHost: LoaderInstallHost = {
   installModFile: (gameId, file, meta) => installMod(gameId, file, meta),
   state: integrationState,
-  saveState: saveIntegrationState
+  saveState: saveIntegrationState,
+  mods: (gameId) => listMods(gameId)
+}
+
+/** Save files a mod already has in the game's save folder (laying it out again keeps their slots). */
+async function ownedSaves(gameId: string, modId: string | undefined): Promise<string[]> {
+  if (!modId) return []
+  const manifest = await readManifest(paths.deployManifest(gameId)).catch(() => undefined)
+  return (manifest?.entries ?? []).filter((e) => e.modId === modId && e.target === 'saves').map((e) => e.rel)
 }
 
 const inspected = new Map<string, { at: number; ctx: Promise<GameContext> }>()
@@ -228,7 +236,8 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
     const files = await walkFiles(tmp)
     if (!files.length) throw new Error('The archive contains no files.')
     const pkg: StagedPackage = { dir: tmp, files, name: meta.name ?? guessed.name, archiveName: inputIsDir ? undefined : originalName(input), source: meta.source }
-    const cls = await classifyPackage(pkg, { game, info: ctx.info, integration: ctx.integration, env: integrationEnv() })
+    const sameSource = meta.source ? listMods(gameId).find((m) => m.source?.sourceId === meta.source!.sourceId && m.source?.modId === meta.source!.modId) : undefined
+    const cls = await classifyPackage(pkg, { game, info: ctx.info, integration: ctx.integration, env: integrationEnv(), mods: listMods(gameId), owned: await ownedSaves(gameId, sameSource?.id) })
 
     const name = meta.name ?? cls.name ?? guessed.name
     const version = meta.version ?? cls.version ?? guessed.version
@@ -306,14 +315,14 @@ async function ensureLayout(mod: InstalledMod, ctx: GameContext): Promise<Instal
     // put into the game folder (before 1.4 it was, where no game reads it).
     const files = await walkFiles(mod.stagingDir)
     const pkg: StagedPackage = { dir: mod.stagingDir, files, name: mod.name, archiveName: mod.originalFile, source: mod.source }
-    const cls = looksLikeSave(pkg, files.map((f) => f.rel)) ? await classifyPackage(pkg, { game: ctx.game, info: ctx.info, integration: ctx.integration, env: integrationEnv() }) : undefined
+    const cls = looksLikeSave(pkg, files.map((f) => f.rel)) ? await classifyPackage(pkg, { game: ctx.game, info: ctx.info, integration: ctx.integration, env: integrationEnv(), owned: await ownedSaves(mod.gameId, mod.id) }) : undefined
     next = cls
       ? { ...mod, routes: cls.routes, kind: cls.kind, skipped: cls.skipped, checks: cls.checks, layoutBy: want }
       : { ...mod, routes: [route(mod.rootPath, 'game')], skipped: skipDocs(files, mod.rootPath), layoutBy: want }
   } else {
     const files = await walkFiles(mod.stagingDir)
     const pkg: StagedPackage = { dir: mod.stagingDir, files, name: mod.name, archiveName: mod.originalFile, source: mod.source }
-    const cls = await classifyPackage(pkg, { game: ctx.game, info: ctx.info, integration: ctx.integration, env: integrationEnv() })
+    const cls = await classifyPackage(pkg, { game: ctx.game, info: ctx.info, integration: ctx.integration, env: integrationEnv(), mods: listMods(mod.gameId), owned: await ownedSaves(mod.gameId, mod.id) })
     next = {
       ...mod,
       routes: cls.routes,

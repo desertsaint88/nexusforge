@@ -99,6 +99,7 @@ export interface VersionStrings {
   productName?: string
   fileDescription?: string
   companyName?: string
+  copyright?: string
   version?: string
 }
 
@@ -111,6 +112,7 @@ export async function readVersionStrings(file: string): Promise<VersionStrings |
       productName: stringValue(block, 'ProductName'),
       fileDescription: stringValue(block, 'FileDescription'),
       companyName: stringValue(block, 'CompanyName'),
+      copyright: stringValue(block, 'LegalCopyright'),
       version: stringValue(block, 'ProductVersion') ?? stringValue(block, 'FileVersion') ?? fixedVersion(block)
     }
   } catch {

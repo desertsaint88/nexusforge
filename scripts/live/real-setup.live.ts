@@ -1,12 +1,12 @@
 // Live end-to-end checks of the one-click setup with real downloads and real game files.
 //
 // Casualties: Unknown: a vanilla copy of the installed demo (its Steam folder is only read) gets the real
-// BepInEx 5 from GitHub (SHA-256 checked) and the user's downloaded Medical Brutalism, deployed and verified;
+// BepInEx 5 from GitHub (SHA-256 checked) and Medical Brutalism from NexusForge's mod storage, deployed and verified;
 // then the copy is started (batch mode, no window) and BepInEx's own log must show the plugin loading.
 // Terraria: the real tModLoader.zip from GitHub is installed next to a stand-in GOG Terraria folder, and the
-// user's real Terraria copy is inspected read-only (where its world goes, whether tModLoader can be set up).
+// local Terraria copy (TERRARIA_DIR) is inspected read-only (where its world goes, whether tModLoader can be set up).
 //
-// Env: LIVE_DIR (work folder), CU_DEMO (installed demo), TERRARIA_DIR (the user's Terraria), NF_DATA (NexusForge data).
+// Env: LIVE_DIR (work folder), CU_DEMO (installed demo), TERRARIA_DIR (a local Terraria; or terrariaDir in scripts/local.json), NF_DATA (NexusForge data).
 
 import { describe, expect, it } from 'vitest'
 import { spawn } from 'node:child_process'
@@ -30,10 +30,11 @@ import { applyDeployment } from '../../src/main/mods/deploy'
 import { buildPlan } from '../../src/main/mods/plan'
 import { planFilesFor } from '../../src/main/mods/routes'
 import { walkFiles } from '../../src/main/util/fs'
+import { local as localConfig } from '../local-config.mjs'
 
 const LIVE = resolve(process.env.LIVE_DIR ?? join(import.meta.dirname, '..', '..', '.smoke', 'live'))
 const DEMO = process.env.CU_DEMO ?? 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Casualties Unknown Demo'
-const TERRARIA = process.env.TERRARIA_DIR ?? 'E:\\Games\\Terraria'
+const TERRARIA = process.env.TERRARIA_DIR ?? localConfig.terrariaDir
 const NF_DATA = process.env.NF_DATA ?? join(os.homedir(), 'AppData', 'Roaming', 'NexusForge')
 const UA = 'NexusForge-live-check'
 const say = (...a: unknown[]) => console.log('[live]', ...a)
@@ -142,7 +143,7 @@ describe('Casualties: Unknown (copy of the installed demo, real BepInEx, real st
     expect(steps.some((s) => /SHA-256 GitHub published/.test(s))).toBe(true)
     expect(mods[0]).toMatchObject({ kind: 'loader', loaderId: 'bepinex' })
 
-    // The user's real download (read from NexusForge's downloads folder, copied before unpacking).
+    // A real download (read from NexusForge's downloads folder, copied before unpacking).
     const dl = (await fsp.readdir(join(NF_DATA, 'downloads'))).find((f) => /MedicalBrutalism/i.test(f))
     expect(dl, 'Medical Brutalism download in NexusForge/downloads').toBeTruthy()
     const local = join(work, 'MedicalBrutalism.zip')
@@ -225,7 +226,7 @@ describe('real .tmod files from the tModLoader Workshop (SteamCMD anonymous into
   })
 })
 
-describe('Terraria (real tModLoader.zip, the real Terraria copy read-only)', () => {
+describe('Terraria (real tModLoader.zip, a local Terraria copy read-only)', () => {
   it('installs the official tModLoader.zip next to a GOG-style Terraria folder (layout and checksum as published)', async () => {
     const work = join(LIVE, 'terraria')
     await fsp.rm(work, { recursive: true, force: true })
@@ -265,7 +266,8 @@ describe('Terraria (real tModLoader.zip, the real Terraria copy read-only)', () 
     expect((await fsp.readdir(dir)).sort()).toEqual(['Content', 'Terraria.exe', 'goggame-1207665503.info'])
   })
 
-  it("the user's Terraria copy (read-only): where A Link to Terraria goes, and whether tModLoader can be set up", async () => {
+  it("a local Terraria copy (read-only): where A Link to Terraria goes, and whether tModLoader can be set up", async () => {
+    if (!TERRARIA) return say('no TERRARIA_DIR; skipped')
     if (!(await fsp.access(join(TERRARIA, 'Terraria.exe')).then(() => true, () => false))) return say(`no Terraria at ${TERRARIA} any more; skipped`)
     const env = realEnv(join(os.homedir(), 'Documents'), join(LIVE, 'nf-work'))
     const game = { id: 'live:real-tr', name: 'Terraria', platform: 'custom', installDir: TERRARIA, exePath: join(TERRARIA, 'Terraria.exe'), modding: { targetDir: TERRARIA, strategy: 'auto', sources: {} } } as unknown as Game

@@ -174,6 +174,16 @@ async function isDotNetScript(pkg: StagedPackage, rel: string): Promise<boolean>
   }
 }
 
+/** An args.txt that only has the start options Script Hook V's own args.txt has. */
+async function isShvArgs(file: string): Promise<boolean> {
+  try {
+    const words = (await fsp.readFile(file, 'utf8')).split(/\s+/).filter(Boolean)
+    return words.length > 0 && words.every((w) => /^-(nobattleye|noBE)$/i.test(w))
+  } catch {
+    return false
+  }
+}
+
 const GTA_DIRS = new Set(['scripts', 'mods', 'lml', 'plugins'])
 /** Folders of the game itself that a package may bring files for. */
 const GAME_FOLDERS = new Set(['scripts', 'mods', 'lml', 'plugins', 'update', 'x64', 'common', 'redux', 'menyoostuff'])
@@ -228,8 +238,10 @@ export async function classifyGta(pkg: StagedPackage, game: Game): Promise<Class
   for (const f of top.files) {
     const rel = j(root, f)
     if (isDocFile(f)) skipped.push({ path: rel, reason: 'read-me file, not part of the mod' })
+    else if (/\.(jpe?g|png|gif|webp|bmp)$/i.test(f) && !topScript) skipped.push({ path: rel, reason: 'a preview picture; GTA V reads nothing from pictures next to GTA5.exe' })
     else if (/^(dinput8|xinput1_4|dsound|version)\.dll$/i.test(f)) skipped.push({ path: rel, reason: 'an ASI loader / proxy DLL; NexusForge installs Script Hook V and its ASI loader itself' })
     else if (/^ScriptHookV\.dll$/i.test(f)) skipped.push({ path: rel, reason: 'a copy of Script Hook V; NexusForge installs the version that fits the game' })
+    else if (/^args\.txt$/i.test(f) && (await isShvArgs(join(pkg.dir, rel)))) skipped.push({ path: rel, reason: "Script Hook V's args.txt (-nobattleye); NexusForge installs it with Script Hook V" })
     else if (/\.asi$/i.test(f)) {
       routes.push(route(rel, 'game', f))
       needs.add('scripthookv')
@@ -250,7 +262,7 @@ export async function classifyGta(pkg: StagedPackage, game: Game): Promise<Class
 
 export interface GtaSaveFolder {
   dir: string
-  /** "RUNE Social Club emulator (UserId 1010…)", "Rockstar profile 1A2B3C4D" */
+  /** "RUNE Social Club emulator (UserId 1234…)", "Rockstar profile 1A2B3C4D" */
   label: string
   /** Why NexusForge thinks this is where the game reads saves. */
   evidence: string
@@ -291,22 +303,40 @@ export async function gtaSaveFolder(game: Game, env: Pick<IntegrationEnv, 'docum
   return { note: (await dirExists(profiles)) ? `No GTA V profile in ${profiles} has saves yet; start the game once and save.` : 'No GTA V save folder found yet; start the game once and save.' }
 }
 
-/** Save files of a package, grouped by save (SGTA50015 + SGTA50015.bak), in their new slot names. */
-export async function gtaSaveRoutes(saveFiles: string[], target: Pick<DeployTarget, 'dir'>): Promise<{ routes: ModRoute[]; checks: ModCheck[] }> {
+/**
+ * Save files of a package, grouped by save (SGTA50015 + SGTA50015.bak), in their new slot names. `owned` are the
+ * save files this mod already has in the save folder: laying it out again keeps those slots.
+ */
+export async function gtaSaveRoutes(saveFiles: string[], target: Pick<DeployTarget, 'dir'>, owned: string[] = []): Promise<{ routes: ModRoute[]; checks: ModCheck[] }> {
   const routes: ModRoute[] = []
   const checks: ModCheck[] = []
   const used = new Set<number>()
+  const slotOf = (name: string) => {
+    const m = basename(name).match(/^SGTA500(\d{2})$/i)
+    return m ? Number(m[1]) : undefined
+  }
+  const mine = owned.map(slotOf).filter((n): n is number => n !== undefined)
   for (const e of await safeReaddir(target.dir)) {
-    const m = e.isFile() && e.name.match(/^SGTA500(\d{2})$/i)
-    if (m) used.add(Number(m[1]))
+    const n = e.isFile() ? slotOf(e.name) : undefined
+    if (n !== undefined && !mine.includes(n)) used.add(n)
   }
   const saves = saveFiles.filter((f) => SAVE_NAME.test(basename(f)))
   if (!saves.length) {
     checks.push({ level: 'error', code: 'savegame', message: 'No GTA V story save (SGTA500NN) in this package.', userAction: "Open the mod's folder and copy the save where the mod page says." })
     return { routes, checks }
   }
-  for (const s of saves) {
+  for (const [i, s] of saves.entries()) {
     const want = Number(basename(s).slice(-2))
+    const keep = mine[i]
+    if (keep !== undefined && !used.has(keep)) {
+      used.add(keep)
+      const name = `SGTA500${String(keep).padStart(2, '0')}`
+      routes.push(route(s, 'saves', name))
+      const bak = saveFiles.find((f) => f.toLowerCase() === `${s.toLowerCase()}.bak`)
+      if (bak) routes.push(route(bak, 'saves', `${name}.bak`))
+      checks.push({ level: 'info', code: 'save_slot', message: `Stays in save slot ${keep + 1} (${name}), where NexusForge put it before.` })
+      continue
+    }
     let slot = want <= 15 && !used.has(want) ? want : -1
     for (let n = 0; slot < 0 && n <= 15; n++) if (!used.has(n)) slot = n
     if (slot < 0) {
@@ -477,7 +507,7 @@ export const gta5Integration: GameIntegration = {
     if (isLoaderPackage(shvdnSpec, pkg)) return classifyLoaderPackage(shvdnSpec, pkg)
     return classifyGta(pkg, game)
   },
-  saveRoutes: (_pkg, saveFiles, target) => gtaSaveRoutes(saveFiles, target),
+  saveRoutes: (_pkg, saveFiles, target, _game, owned) => gtaSaveRoutes(saveFiles, target, owned),
   async verify(game, info, manifest, mods): Promise<VerifyCheck[]> {
     const checks: VerifyCheck[] = []
     const deployed = new Set(manifest.entries.map((e) => e.modId))

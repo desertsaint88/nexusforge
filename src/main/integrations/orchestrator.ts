@@ -75,6 +75,11 @@ function installOrder(info: IntegrationInfo, wanted: string[], mods: Array<{ loa
     const l = info.loaders.find((x) => x.id === id)
     if (!l || depth > 6) return
     for (const r of l.requires ?? []) add(r, depth + 1)
+    // Installed, unless an enabled mod needs more than what is there (ReShade's add-on build, more shader packs).
+    if (l.refresh && (l.canUpdate || l.canInstall)) {
+      if (!out.includes(id)) out.push(id)
+      return
+    }
     if (l.state === 'installed' || l.state === 'outdated') return
     if (mods.some((x) => x.loaderId === id)) return
     if (!out.includes(id)) out.push(id)
@@ -95,7 +100,7 @@ async function neededLoaders(gameId: string, info: IntegrationInfo): Promise<str
   return installOrder(info, wanted, mods)
 }
 
-async function runLoaderInstall(op: Operation, gameId: string, loaderId: string, signal?: AbortSignal): Promise<boolean> {
+async function runLoaderInstall(op: Operation, gameId: string, loaderId: string, signal?: AbortSignal, force = false): Promise<boolean> {
   const { game, integration, info } = await inspectGame(gameId, true)
   const loader = integration.loaders.find((l) => l.id === loaderId)
   const status = info.loaders.find((l) => l.id === loaderId)
@@ -104,7 +109,8 @@ async function runLoaderInstall(op: Operation, gameId: string, loaderId: string,
     op.update(step, { state: 'failed', detail: `${game.name} has no ${loaderId}.` })
     return false
   }
-  if (!status.canInstall && !status.canUpdate) {
+  // force: the user asked for it in the ReShade tab (another build or API, or taking over a copy installed by hand).
+  if (status.state === 'unsupported' || (!force && !status.canInstall && !status.canUpdate) || (force && status.blocked)) {
     op.update(step, { state: 'skipped', detail: status.blocked ?? status.detail ?? 'Nothing to install.' })
     return false
   }
@@ -204,17 +210,21 @@ export function setupAndDeploy(gameId: string, opts: { quiet?: boolean; signal?:
   return run
 }
 
-/** The Install / Update button of a loader: installs it, then deploys so it is in the game. */
-export function installLoader(gameId: string, loaderId: string, signal?: AbortSignal): Promise<DeployReport | undefined> {
+/**
+ * The Install / Update button of a loader: installs it, then deploys so it is in the game. `also` are more loaders
+ * to (re)install in the same operation (ReShade and its shader packs); `force` installs even when the loader is
+ * already there (the user picked another build or API).
+ */
+export function installLoader(gameId: string, loaderId: string, signal?: AbortSignal, opts: { also?: string[]; force?: boolean } = {}): Promise<DeployReport | undefined> {
   return queue(gameId, async () => {
     const { game, info } = await inspectGame(gameId, true)
     const name = info.loaders.find((l) => l.id === loaderId)?.name ?? loaderId
     const op = new Operation(gameId, `Installing ${name} for ${game.name}`)
     const status = info.loaders.find((l) => l.id === loaderId)
     // What it builds on goes in first; the loader itself is (re)installed even when it is there (Update / Repair).
-    const chain = [...installOrder(info, status?.requires ?? [], listMods(gameId)), loaderId]
+    const chain = [...installOrder(info, status?.requires ?? [], listMods(gameId)), loaderId, ...(opts.also ?? []).filter((x) => x !== loaderId)]
     let ok = true
-    for (const id of chain) if (ok) ok = await runLoaderInstall(op, gameId, id, signal)
+    for (const id of chain) if (ok) ok = await runLoaderInstall(op, gameId, id, signal, Boolean(opts.force) && (id === loaderId || (opts.also ?? []).includes(id)))
     if (!ok) {
       op.finish(false, op.p.steps.at(-1)?.detail)
       throw new Error(op.p.steps.at(-1)?.detail ?? `Could not install ${name}.`)

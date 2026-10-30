@@ -1,0 +1,10 @@
+{
+  "libraryGames": ["Terraria", "BeamNG.drive", "Grand Theft Auto V"],
+  "probeGames": {
+    "reshade": ["Grand Theft Auto V", "BeamNG.drive"],
+    "loaders": ["Grand Theft Auto V", "Cyberpunk 2077"],
+    "diagnostics": ["Grand Theft Auto V"]
+  },
+  "terrariaDir": "D:\\Games\\Terraria",
+  "mcPack": "D:\\Downloads\\GTA V X Minecraft\\GTA V"
+}

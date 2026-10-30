@@ -13,18 +13,40 @@
 
 import { promises as fsp } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import type { Game, IntegrationInfo } from '@shared/types'
+import type { Game, InstalledMod, IntegrationInfo } from '@shared/types'
 import type { Classification, GameIntegration, IntegrationEnv, StagedPackage } from '../integrations/types'
-import { isDocFile } from '../integrations/common'
+import { children, isDocFile, route } from '../integrations/common'
 import { looksLikeSave } from '../integrations/generic'
-import { fileStrings, identifyProxy } from '../integrations/proxy'
+import { fileStrings } from '../integrations/proxy'
+import { readVersionStrings } from '../library/exe-version'
 import { safeReaddir } from '../util/fs'
+import { GAME_DIRS } from './layout'
+import { IniDoc } from '../reshade/ini'
+import { isPresetText, parsePreset } from '../reshade/presets'
+import {
+  chooseModule,
+  EFFECTS_ID,
+  EFFECTS_MARKER,
+  findReshade,
+  moduleNames,
+  renderTarget,
+  RESHADE_ID,
+  RESHADE_MARKER,
+  reshadeTargetId,
+  type EffectsMarker,
+  type ReshadeApi,
+  type ReshadeMarker
+} from '../reshade/core'
 
 export interface ClassifyContext {
   game: Game
   info: IntegrationInfo
   integration: GameIntegration
   env: IntegrationEnv
+  /** The game's installed mods (NexusForge's own ReShade keeps the file name it has). */
+  mods?: InstalledMod[]
+  /** Files this mod already has in the save target (laying a save out again keeps its slot). */
+  owned?: string[]
 }
 
 export interface InstallStrategy {
@@ -120,7 +142,7 @@ export const saveStrategy: InstallStrategy = {
     const skipped = files.filter((f) => isDocFile(basename(f))).map((path) => ({ path, reason: 'read-me file, not part of the save' }))
     const target = ctx.info.targets.find((t) => t.id === 'saves')
     if (target && ctx.integration.saveRoutes) {
-      const r = await ctx.integration.saveRoutes(pkg, saveFiles, target, ctx.game)
+      const r = await ctx.integration.saveRoutes(pkg, saveFiles, target, ctx.game, ctx.owned)
       return { kind: 'savegame', routes: r.routes, skipped, checks: r.checks, rootPath: '' }
     }
     return {
@@ -186,65 +208,366 @@ export const frameworkModStrategy: InstallStrategy = {
   }
 }
 
-const PRESET_INI = /^Techniques=/m
-const FX_SECTION = /^\[[^\]\r\n]+\.fx\]/m
-const RESHADE_PROXIES = ['dxgi.dll', 'd3d9.dll', 'd3d10.dll', 'd3d11.dll', 'd3d12.dll', 'opengl32.dll', 'dinput8.dll', 'ddraw.dll', 'vulkan-1.dll']
-
-/** ReShade is installed next to the game's .exe (its proxy DLL or ReShade.ini). */
+/** ReShade is installed next to the game's .exe: the file it runs as, else its ReShade.ini. */
 export async function reshadeInstalled(game: Pick<Game, 'exePath' | 'installDir'>): Promise<string | undefined> {
   const dir = game.exePath ? dirname(game.exePath) : game.installDir
-  const names = (await safeReaddir(dir)).filter((e) => e.isFile()).map((e) => e.name)
-  const ini = names.find((n) => /^reshade\.ini$/i.test(n))
-  if (ini) return ini
-  for (const n of names) {
-    if (!RESHADE_PROXIES.includes(n.toLowerCase())) continue
-    if ((await identifyProxy(join(dir, n), n)).owner === 'reshade') return n
+  const copy = (await findReshade(dir))[0]
+  if (copy) return copy.name
+  return (await safeReaddir(dir)).find((e) => e.isFile() && /^reshade\.ini$/i.test(e.name))?.name
+}
+
+/** NexusForge's own ReShade and shader-pack packages (built by reshade/core.ts from the official downloads). */
+export const reshadePackageStrategy: InstallStrategy = {
+  id: 'reshade',
+  label: 'ReShade (installed by NexusForge)',
+  prerequisites: "The game's executable is known and ReShade's compatibility list doesn't mark the game as banning ReShade.",
+  destination: "ReShade's DLL next to the game's executable under the name for its graphics API (dxgi.dll, d3d9.dll, opengl32.dll; never over a file that came with the game); shader packs into reshade-shaders\\ there.",
+  validation: "ReShade is in place under one name only, has add-on support when a mod needs it, and ReShade.ini searches reshade-shaders\\. After a start, ReShade.log shows whether it attached to the game and which effects compiled.",
+  rollback: 'Purge removes the DLL and the shader packs and puts back any file they replaced; ReShade.ini goes too when NexusForge created it.',
+  async match(pkg, ctx): Promise<Classification | undefined> {
+    const marker = pkg.files.find((f) => f.rel === RESHADE_MARKER)
+    const fxMarker = pkg.files.find((f) => f.rel === EFFECTS_MARKER)
+    if (!marker && !fxMarker) return undefined
+    const t = await renderTarget(ctx.game, ctx.env)
+    const dir = t?.dir ?? (ctx.game.exePath ? dirname(ctx.game.exePath) : ctx.game.installDir)
+    const target = reshadeTargetId(ctx.info, dir)
+    if (fxMarker) {
+      const m = JSON.parse(await fsp.readFile(fxMarker.abs, 'utf8')) as EffectsMarker
+      return {
+        kind: 'loader',
+        loaderId: EFFECTS_ID,
+        name: 'ReShade shader packs',
+        routes: pkg.files.some((f) => f.rel.toLowerCase().startsWith('reshade-shaders/')) ? [route('reshade-shaders', target, 'reshade-shaders')] : [],
+        skipped: [{ path: EFFECTS_MARKER, reason: "NexusForge's note of the packs it put together" }],
+        checks: [],
+        needsLoader: RESHADE_ID,
+        rootPath: '',
+        meta: { packages: m.packages.join('|') }
+      }
+    }
+    const m = JSON.parse(await fsp.readFile(marker!.abs, 'utf8')) as ReshadeMarker
+    const dll = pkg.files.find((f) => /^reshade(32|64)\.dll$/i.test(f.rel))
+    const checks: Classification['checks'] = []
+    let to: string | undefined
+    if (dll && m.api !== 'vulkan') {
+      const managed = (ctx.mods ?? []).find((x) => x.loaderId === RESHADE_ID)
+      const ours = (managed?.routes ?? []).filter((r) => /\.(dll|asi)$/i.test(r.to)).map((r) => basename(r.to))
+      const api = m.api as ReshadeApi
+      const choice = await chooseModule(dir, await moduleNames(api, api === 'd3d11' ? '11' : api === 'd3d12' ? '12' : undefined, dir, m.arch, t?.exeName), ours)
+      to = choice.name
+      if (!to) checks.push({ level: 'error', code: 'proxy_taken', message: `Every name ReShade can load under is taken by files that came with the game: ${choice.taken.map((x) => `${x.name} (${x.label})`).join(', ')}.` })
+      else if (choice.fallback) checks.push({ level: 'info', code: 'reshade_name', message: `${choice.fallback} next to the game belongs to something else and stays; ReShade goes in as ${to}.` })
+    }
+    return {
+      kind: 'loader',
+      loaderId: RESHADE_ID,
+      name: 'ReShade',
+      version: m.version,
+      routes: dll && to ? [route(dll.rel, target, to)] : [],
+      skipped: [{ path: RESHADE_MARKER, reason: "NexusForge's note of the ReShade build it installed" }],
+      checks,
+      rootPath: '',
+      meta: { build: m.build, api: m.api, arch: m.arch, ...(m.thumbprint ? { thumbprint: m.thumbprint } : {}) } as Record<string, string>
+    }
+  }
+}
+
+/** Files a classification deploys: package path, its route, and where it goes inside the route's target. */
+function routedFiles(cls: Classification, pkg: StagedPackage): Array<{ rel: string; target: string; to: string }> {
+  const skip = cls.skipped.map((s) => s.path.toLowerCase())
+  const skipped = (rel: string) => skip.some((s) => s === '' || rel.toLowerCase() === s || rel.toLowerCase().startsWith(`${s}/`))
+  const out: Array<{ rel: string; target: string; to: string }> = []
+  for (const r of cls.routes) {
+    const from = r.from.replace(/^\/+|\/+$/g, '')
+    const file = pkg.files.find((f) => f.rel.toLowerCase() === from.toLowerCase())
+    if (file) {
+      if (!skipped(file.rel)) out.push({ rel: file.rel, target: r.target, to: r.to || basename(file.rel) })
+      continue
+    }
+    const prefix = from ? `${from.toLowerCase()}/` : ''
+    for (const f of pkg.files) {
+      if (prefix && !f.rel.toLowerCase().startsWith(prefix)) continue
+      if (skipped(f.rel)) continue
+      const sub = f.rel.slice(prefix.length)
+      out.push({ rel: f.rel, target: r.target, to: r.to ? `${r.to.replace(/\/+$/, '')}/${sub}` : sub })
+    }
+  }
+  return out
+}
+
+function addNeed(cls: Classification, id: string): void {
+  if (!cls.needsLoader) cls.needsLoader = id
+  else if (cls.needsLoader !== id && !(cls.needsLoaders ?? []).includes(id)) cls.needsLoaders = [...(cls.needsLoaders ?? []), id]
+}
+
+async function textOf(file: string, max = 2 * 1024 * 1024): Promise<string | undefined> {
+  try {
+    const st = await fsp.stat(file)
+    if (st.size > max) return undefined
+    return await fsp.readFile(file, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * ReShade parts of any mod: a ReShade copy bundled with a mod stays out (NexusForge installs ReShade once, in the
+ * version and under the name that fit the game), as do ReShade.ini and ReShade.log (NexusForge writes ReShade.ini;
+ * search paths and depth settings from the mod's copy are carried over). Presets, add-ons and shader folders make
+ * the mod need ReShade (and the shader packs its presets use); they go next to ReShade even when the game's mod
+ * folder is elsewhere.
+ */
+export const reshadeContentStrategy: InstallStrategy = {
+  id: 'reshade-content',
+  label: 'ReShade presets, shaders and add-ons',
+  prerequisites: 'ReShade for the game (NexusForge installs it, with add-on support when an add-on needs it, plus the shader packs presets use).',
+  destination: "Next to ReShade (the game's executable): presets and add-ons at the top, shaders in reshade-shaders\\Shaders, textures in reshade-shaders\\Textures.",
+  validation: 'ReShade is in place (with add-on support if needed); the ReShade tab lists effects a preset uses that are not installed.',
+  rollback: 'Purge removes the files; a preset NexusForge made active is switched back to ReShadePreset.ini.',
+  async amend(cls, pkg, ctx) {
+    if (cls.kind === 'loader' || cls.kind === 'installer' || cls.kind === 'savegame' || cls.kind === 'framework-mod' || cls.kind === 'archive') return
+    const files = routedFiles(cls, pkg)
+    if (!files.length) return
+    const t = await renderTarget(ctx.game, ctx.env).catch(() => undefined)
+    const dir = t?.dir ?? (ctx.game.exePath ? dirname(ctx.game.exePath) : ctx.game.installDir)
+    const rsTarget = reshadeTargetId(ctx.info, dir)
+    const moved = new Set<string>()
+    let uses = false
+    let addon = false
+    const notes: string[] = []
+    const meta = (k: string, v: string[]) => {
+      if (v.length) cls.meta = { ...cls.meta, [k]: [...new Set([...(cls.meta?.[k] ?? '').split('|').filter(Boolean), ...v])].join('|') }
+    }
+    // ReShade itself, its settings and log.
+    for (const f of files) {
+      const name = basename(f.rel)
+      const lower = name.toLowerCase()
+      if (lower === 'reshade.ini' || lower === 'reshade.log') {
+        if (lower === 'reshade.ini') {
+          const doc = IniDoc.parse((await textOf(join(pkg.dir, f.rel))) ?? '')
+          const outside = (key: string) => (doc.getList('GENERAL', key) ?? []).filter((p) => !/^\.?[\\/]?reshade-shaders([\\/]|$)/i.test(p.replace(/^\.[\\/]/, '')) && !/^\.?[\\/]?$/.test(p))
+          meta('reshadeEffectPaths', outside('EffectSearchPaths'))
+          meta('reshadeTexturePaths', outside('TextureSearchPaths'))
+          meta('reshadeDefines', (doc.getList('GENERAL', 'PreprocessorDefinitions') ?? []).filter((d) => /^RESHADE_DEPTH_/.test(d)))
+        }
+        cls.skipped.push({ path: f.rel, reason: lower === 'reshade.ini' ? "ReShade's settings file: NexusForge writes ReShade.ini for the game (keeping your own settings) and takes over this one's shader paths and depth settings" : "ReShade's log from the mod author's PC" })
+        uses = true
+        continue
+      }
+      if (!/\.(dll|asi|addon|addon32|addon64)$/i.test(name)) continue
+      const abs = join(pkg.dir, f.rel)
+      const vs = await readVersionStrings(abs).catch(() => undefined)
+      const text = vs?.productName === 'ReShade' ? '' : /\.(dll|asi|addon\d*)$/i.test(name) ? await fileStrings(abs, 32 * 1024 * 1024).catch(() => '') : ''
+      if (vs?.productName === 'ReShade' || /crosire's ReShade/.test(text)) {
+        cls.skipped.push({ path: f.rel, reason: `a copy of ReShade${vs?.version ? ` ${vs.version.replace(/,\s*/g, '.')}` : ''} that came with the mod; NexusForge installs ReShade itself, once, in the newest version and under the name that fits the game` })
+        uses = true
+        continue
+      }
+      if (/\.addon(32|64)?$/i.test(name) || /ReShadeRegisterAddon/.test(text)) {
+        uses = true
+        addon = true
+        notes.push(`${name} is a ReShade add-on`)
+        if (/\.addon(32|64)?$/i.test(name) && (f.target !== rsTarget || f.to.includes('/'))) {
+          cls.skipped.push({ path: f.rel, reason: 'moved next to ReShade, where it looks for add-ons', moved: true })
+          moved.add(f.rel)
+          cls.routes.push(route(f.rel, rsTarget, name))
+        }
+      }
+    }
+    // Presets and the effects they use.
+    const pkgFx = new Set(pkg.files.filter((f) => /\.fx$/i.test(f.rel)).map((f) => basename(f.rel).toLowerCase()))
+    const wanted = new Set<string>()
+    let presets = 0
+    for (const f of files) {
+      if (!/\.ini$/i.test(f.rel) || /^reshade\.ini$/i.test(basename(f.rel)) || moved.has(f.rel)) continue
+      const text = await textOf(join(pkg.dir, f.rel))
+      if (!text || !isPresetText(text)) continue
+      presets++
+      uses = true
+      for (const fx of parsePreset(text).effects) if (!pkgFx.has(fx.toLowerCase())) wanted.add(fx)
+      if (f.target !== rsTarget) {
+        cls.skipped.push({ path: f.rel, reason: 'moved next to ReShade, where presets go', moved: true })
+        cls.routes.push(route(f.rel, rsTarget, basename(f.rel)))
+      }
+    }
+    // Shader folders: reshade-shaders\ as it is, or Shaders\ / Textures\ folders with effects in them.
+    const shaderFolder = (prefixTest: (dirPath: string) => boolean) => {
+      const dirs = new Set<string>()
+      for (const f of files) {
+        const parts = f.rel.split('/')
+        for (let i = 0; i < parts.length - 1; i++) if (prefixTest(parts[i])) dirs.add(parts.slice(0, i + 1).join('/'))
+      }
+      return [...dirs].sort((a, b) => a.length - b.length).filter((d, i, all) => !all.slice(0, i).some((p) => d.startsWith(`${p}/`)))
+    }
+    const hasFx = files.some((f) => /\.fxh?$/i.test(f.rel))
+    if (hasFx) {
+      uses = true
+      for (const d of shaderFolder((p) => /^reshade-shaders$/i.test(p))) {
+        const sample = files.find((f) => f.rel.startsWith(`${d}/`))
+        if (sample && (sample.target !== rsTarget || !/^reshade-shaders\//i.test(sample.to))) {
+          cls.skipped.push({ path: d, reason: 'moved next to ReShade', moved: true })
+          cls.routes.push(route(d, rsTarget, 'reshade-shaders'))
+        }
+      }
+      const outsideRs = files.filter((f) => /\.fxh?$/i.test(f.rel) && !/(^|\/)reshade-shaders\//i.test(f.rel))
+      if (outsideRs.length) {
+        for (const [name, dest] of [
+          [/^shaders$/i, 'reshade-shaders/Shaders'],
+          [/^textures$/i, 'reshade-shaders/Textures']
+        ] as const) {
+          for (const d of shaderFolder((p) => name.test(p))) {
+            if (/(^|\/)reshade-shaders\//i.test(`${d}/`)) continue
+            cls.skipped.push({ path: d, reason: `ReShade ${dest.endsWith('Shaders') ? 'shaders' : 'textures'}: moved to ${dest.replace(/\//g, '\\')} next to ReShade, where ReShade looks for them`, moved: true })
+            cls.routes.push(route(d, rsTarget, dest))
+          }
+        }
+        // Loose effects at the top of the package.
+        for (const f of files.filter((x) => /\.fxh?$/i.test(x.rel) && !x.rel.includes('/'))) {
+          cls.skipped.push({ path: f.rel, reason: 'ReShade effect: moved to reshade-shaders\\Shaders', moved: true })
+          cls.routes.push(route(f.rel, rsTarget, `reshade-shaders/Shaders/${basename(f.rel)}`))
+        }
+      }
+    }
+    if (!uses) return
+    addNeed(cls, RESHADE_ID)
+    if (wanted.size) {
+      addNeed(cls, EFFECTS_ID)
+      cls.meta = { ...cls.meta, reshadeEffects: [...wanted].join(',') }
+    }
+    if (addon) cls.meta = { ...cls.meta, reshadeAddon: '1' }
+    if (presets && payload(pkg).every((rel) => /\.ini$/i.test(rel))) cls.kind = 'preset'
+    const status = ctx.info.loaders.find((l) => l.id === RESHADE_ID)
+    const parts = [
+      presets ? `${presets === 1 ? 'A ReShade preset' : `${presets} ReShade presets`}${wanted.size ? ` (uses ${[...wanted].slice(0, 6).join(', ')}${wanted.size > 6 ? ', …' : ''}, which come with ReShade's shader packs)` : ''}` : undefined,
+      addon ? `${notes.join(', ')}: it needs ReShade with add-on support` : undefined
+    ].filter(Boolean)
+    if (status?.state === 'unsupported') {
+      cls.checks.push({ level: 'warning', code: 'needs_reshade', message: `${parts.join('. ') || 'This mod is for ReShade'}. ${status.blocked ?? 'ReShade cannot be installed for this game.'}`, userAction: status.blocked })
+    } else {
+      cls.checks.push({
+        level: 'info',
+        code: 'needs_reshade',
+        message: `${parts.join('. ') || 'This mod is for ReShade'}. ${status?.state === 'installed' || status?.state === 'outdated' ? `ReShade is installed for this game${status.proxy ? ` (${status.proxy})` : ''}` : 'NexusForge installs ReShade from reshade.me with the next setup'}${presets ? ', and makes the preset the active one' : ''}.`
+      })
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Archives with one folder per game ("GTA V/" next to "Minecraft/")
+
+/** Folder names that belong inside a game folder: never a folder "for another game". */
+const CONTENT_DIRS = new Set([
+  ...GAME_DIRS,
+  'scripts', 'lml', 'update', 'common', 'redux', 'menyoostuff', 'bepinex', 'reshade-shaders', 'shaders', 'textures', 'win64', 'x86', 'saves', 'save'
+])
+
+/** Comparable forms of a name: "Grand Theft Auto V" -> grandtheftautov, grandtheftauto5, gtav, gta5. */
+export function nameForms(name: string): Set<string> {
+  const ROMAN: Record<string, string> = { i: '1', ii: '2', iii: '3', iv: '4', v: '5', vi: '6', vii: '7', viii: '8', ix: '9', x: '10' }
+  const DIGIT = Object.fromEntries(Object.entries(ROMAN).map(([r, d]) => [d, r]))
+  const tokens = name
+    .replace(/\.(exe|zip|7z|rar)$/i, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([a-z])(\d)/gi, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+  const out = new Set<string>()
+  const add = (t: string[]) => {
+    if (!t.length) return
+    out.add(t.join(''))
+    if (t.length >= 3 || (t.length === 2 && /^(\d+|[ivx]+)$/.test(t[1]))) out.add(t.map((x) => (/^(\d+|[ivx]+)$/.test(x) ? x : x[0])).join(''))
+  }
+  add(tokens)
+  add(tokens.map((t) => ROMAN[t] ?? t))
+  add(tokens.map((t) => DIGIT[t] ?? t))
+  for (const f of [...out]) if (f.length < 3) out.delete(f)
+  return out
+}
+
+function gameNames(game: Game): Set<string> {
+  const out = new Set<string>()
+  const names = [game.name, basename(game.installDir), game.exePath ? basename(game.exePath) : '', game.exePath ? basename(dirname(game.exePath)) : '']
+  for (const n of names) if (n) for (const f of nameForms(n)) out.add(f)
+  return out
+}
+
+export interface GameFolderSplit {
+  /** Folder of the package that is for this game. */
+  prefix: string
+  /** Its siblings, and why they stay out. */
+  others: Array<{ path: string; reason: string }>
+}
+
+/**
+ * An archive with one folder per game or program ("GTA V/…" and "Minecraft/…", maybe inside a wrapper folder):
+ * the folder named after this game is the mod; the others are for something else. Undefined when the package
+ * isn't laid out like that (the game's own rules decide then).
+ */
+export function perGameFolder(pkg: Pick<StagedPackage, 'files'>, game: Game): GameFolderSplit | undefined {
+  const names = gameNames(game)
+  let prefix = ''
+  for (let depth = 0; depth < 4; depth++) {
+    const c = children(pkg.files, prefix)
+    if (c.files.some((f) => !isDocFile(f) && !/\.(jpe?g|png|gif|webp|bmp)$/i.test(f))) return undefined
+    if (c.dirs.length === 1) {
+      prefix = prefix ? `${prefix}/${c.dirs[0]}` : c.dirs[0]
+      continue
+    }
+    if (c.dirs.length < 2) return undefined
+    const matching = c.dirs.filter((d) => [...nameForms(d)].some((f) => names.has(f)))
+    if (matching.length !== 1) return undefined
+    const others = c.dirs.filter((d) => d !== matching[0])
+    if (others.some((d) => CONTENT_DIRS.has(d.toLowerCase()))) return undefined
+    const j = (d: string) => (prefix ? `${prefix}/${d}` : d)
+    return {
+      prefix: j(matching[0]),
+      others: others.map((d) => {
+        const inside = pkg.files.filter((f) => f.rel.toLowerCase().startsWith(`${j(d).toLowerCase()}/`)).map((f) => basename(f.rel))
+        const reason = /^(screens?hots?|images?|pictures?|previews?|docs?|documentation)$/i.test(d)
+          ? 'pictures or documentation, not part of the mod'
+          : /optional|extra|addon|bonus|alternat|variant/i.test(d)
+            ? `optional files; only the "${matching[0]}" folder is installed (copy what you want from the mod's folder by hand)`
+            : `for another game or program${inside.some((f) => /\.jar$/i.test(f)) ? ` (it holds ${inside.find((f) => /\.jar$/i.test(f))}, a Java mod)` : ''}; only the "${matching[0]}" folder is for ${game.name}`
+        return { path: j(d), reason }
+      })
+    }
   }
   return undefined
 }
 
-export const reshadePresetStrategy: InstallStrategy = {
-  id: 'reshade-preset',
-  label: 'ReShade preset',
-  prerequisites: 'ReShade installed for the game (with its own setup from reshade.me).',
-  destination: "Next to the game's .exe, where ReShade looks for presets.",
-  validation: 'NexusForge checks that ReShade is installed; whether the preset is selected is up to ReShade\'s overlay.',
-  rollback: 'Purge removes the preset file.',
-  async amend(cls, pkg, ctx) {
-    const inis = pkg.files.filter((f) => /\.ini$/i.test(f.rel) && f.size < 2 * 1024 * 1024)
-    let presets = 0
-    for (const f of inis) {
-      try {
-        const text = await fsp.readFile(join(pkg.dir, f.rel), 'utf8')
-        if (PRESET_INI.test(text) && FX_SECTION.test(text)) presets++
-      } catch {
-        // unreadable: not a preset we can recognize
-      }
-    }
-    if (!presets) return
-    if (payload(pkg).every((rel) => /\.ini$/i.test(rel))) cls.kind = 'preset'
-    const installed = await reshadeInstalled(ctx.game)
-    cls.checks.push(
-      installed
-        ? { level: 'info', code: 'reshade_preset', message: `A ReShade preset; ReShade is installed for this game (${installed}). Pick the preset in ReShade's overlay.` }
-        : {
-            level: 'warning',
-            code: 'needs_reshade',
-            message: 'A ReShade preset: it only changes anything with ReShade installed for this game, and ReShade is not installed here.',
-            userAction: `Install ReShade for ${ctx.game.exePath ? basename(ctx.game.exePath) : ctx.game.name} with its own setup (reshade.me), then pick the preset in ReShade's overlay. NexusForge doesn't run installers.`
-          }
-    )
+/** The package seen from one of its folders. */
+function narrowed(pkg: StagedPackage, prefix: string): StagedPackage {
+  const p = `${prefix.toLowerCase()}/`
+  return { ...pkg, dir: join(pkg.dir, ...prefix.split('/')), files: pkg.files.filter((f) => f.rel.toLowerCase().startsWith(p)).map((f) => ({ ...f, rel: f.rel.slice(p.length) })) }
+}
+
+function widened(cls: Classification, split: GameFolderSplit): Classification {
+  const j = (rel: string) => (rel ? `${split.prefix}/${rel}` : split.prefix)
+  return {
+    ...cls,
+    rootPath: j(cls.rootPath),
+    routes: cls.routes.map((r) => ({ ...r, from: j(r.from) })),
+    skipped: [...split.others, ...cls.skipped.map((s) => ({ ...s, path: j(s.path) }))],
+    meta: cls.meta?.installer ? { ...cls.meta, installer: j(cls.meta.installer) } : cls.meta,
+    checks: [{ level: 'info', code: 'game_folder', message: `The archive has a folder per game; NexusForge installs "${basename(split.prefix)}" and leaves out ${split.others.map((o) => `"${basename(o.path)}"`).join(', ')}.` }, ...cls.checks]
   }
 }
 
 /** Shared strategies, in the order they are tried. */
-export const STRATEGIES: InstallStrategy[] = [installerStrategy, saveStrategy, frameworkModStrategy, reshadePresetStrategy]
+export const STRATEGIES: InstallStrategy[] = [reshadePackageStrategy, installerStrategy, saveStrategy, frameworkModStrategy, reshadeContentStrategy]
 
 /** Raised when shared classification rules change: every mod is laid out again (manual layouts excepted). */
-export const SHARED_RULES_REVISION = 1
+// 2: ReShade content (bundled ReShade copies left out, presets/shaders next to ReShade), folder-per-game archives.
+export const SHARED_RULES_REVISION = 2
 
 /** Classifies a package: shared strategies first, then the game's own rules, then shared amendments. */
 export async function classifyPackage(pkg: StagedPackage, ctx: ClassifyContext): Promise<Classification> {
+  const split = perGameFolder(pkg, ctx.game)
+  if (split) return widened(await classifyPackage(narrowed(pkg, split.prefix), ctx), split)
   for (const s of STRATEGIES) {
     const hit = await s.match?.(pkg, ctx)
     if (hit) return { ...hit, meta: { ...hit.meta, strategy: s.id } }

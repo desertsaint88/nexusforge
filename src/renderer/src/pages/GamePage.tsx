@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock, FolderOpen, Layers, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert, Wrench, Stethoscope } from 'lucide-react'
+import { Clock, FolderOpen, Layers, Puzzle, Rocket, Settings, Star, Swords, CalendarClock, Upload, HardDrive, CircleCheck, CircleAlert, Wrench, Stethoscope, Sparkles } from 'lucide-react'
 import type { Game, LaunchOption } from '@shared/types'
 import { useLibrary } from '../store/library'
 import { activeProfileOf, useMods } from '../store/mods'
@@ -15,6 +15,7 @@ import { ConflictsTab } from './game/ConflictsTab'
 import { ProfilesTab } from './game/ProfilesTab'
 import { GameSettingsTab } from './game/GameSettingsTab'
 import { DiagnoseTab } from './game/DiagnoseTab'
+import { ReShadeTab } from './game/ReShadeTab'
 
 /** One cell of the stats strip under the header. */
 function Stat({ icon, label, value, tone }: { icon: ReactNode; label: string; value: ReactNode; tone?: 'ok' | 'warn' }) {
@@ -83,6 +84,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
   const install = useMods((s) => s.install)
   const deploying = useMods((s) => s.deploying[gameId])
   const detectedInfo = useLibrary((s) => s.detected[gameId])
+  const integration = useMods((s) => s.integration[gameId])
   const [current, setCurrent] = useState<GameTab>(tab ?? 'mods')
 
   useEffect(() => setCurrent(tab ?? 'mods'), [gameId, tab])
@@ -100,6 +102,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
   const conflictCount = state?.conflicts?.totalFiles ?? 0
   const outside = detectedInfo?.mods.filter((m) => m.kind !== 'loader' && !m.managedModId).length ?? 0
   const runtimeFailed = Object.values(status?.runtime ?? {}).filter((r) => r.state === 'failed').length
+  const reshade = integration?.loaders.find((l) => l.id === 'reshade')
 
   return (
     <div className="relative h-full overflow-y-auto">
@@ -158,6 +161,12 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
             },
             { value: 'profiles', label: 'Profiles', icon: <Star />, badge: profile ? <span className="text-[11px] text-ink-400">{profile.name}</span> : undefined },
             {
+              value: 'reshade',
+              label: 'ReShade',
+              icon: <Sparkles />,
+              badge: reshade?.state === 'installed' ? <span className="size-1.5 rounded-full bg-emerald-400" /> : reshade?.required && reshade.state !== 'unsupported' ? <Badge tone="warning">needed</Badge> : undefined
+            },
+            {
               value: 'diagnose',
               label: 'Diagnose',
               icon: <Stethoscope />,
@@ -173,6 +182,7 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
               {current === 'mods' && <ModsTab game={game} onShowConflicts={() => setCurrent('conflicts')} />}
               {current === 'conflicts' && <ConflictsTab game={game} />}
               {current === 'profiles' && <ProfilesTab game={game} />}
+              {current === 'reshade' && <ReShadeTab game={game} />}
               {current === 'diagnose' && <DiagnoseTab game={game} />}
               {current === 'settings' && <GameSettingsTab game={game} onRemoved={() => navigate({ name: 'library' })} />}
             </motion.div>

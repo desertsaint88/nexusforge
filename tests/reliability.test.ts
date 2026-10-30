@@ -1,6 +1,6 @@
 // Reliability: packages that must never be "deployed" as plain files, save games that must land where the game
 // reads them (without replacing a save the player has), runtime evidence from loader logs mapped to mods, the
-// read-only diagnostics, and the redacted report. The fixtures copy real cases from a test PC: a SteamRIP GTA V
+// read-only diagnostics, and the redacted report. The fixtures follow real-world cases: a repacked GTA V
 // with RUNE's Social Club emulator, Zombies V (needs Script Hook V .NET API 3.7), a NexusTools mod for WATCH_DOGS,
 // a ReShade preset for Sky, a NexusTools setup .exe.
 //
@@ -62,17 +62,17 @@ function infoOf(game: Game, integration: GameIntegration, targets = [{ id: 'game
   }
 }
 
-/** A SteamRIP-style GTA V: wrapper folder, game one level down, RUNE's Social Club emulator. */
+/** A repacked GTA V: wrapper folder, game one level down, RUNE's Social Club emulator. */
 async function gtaRepack(env: FakeEnv, opts: { userId?: string; withSaveDir?: boolean; userSaves?: string[] } = {}) {
-  const wrapper = join(root, 'E', 'Games', 'Grand-Theft-Auto-V-SteamRIP.com')
+  const wrapper = join(root, 'D', 'Games', 'Grand-Theft-Auto-V-Repack')
   const dir = join(wrapper, 'Grand Theft Auto V')
   await write(join(dir, 'GTA5.exe'), 'MZ')
   await write(join(dir, 'RUNE64.dll'), 'MZ rune')
   await write(join(dir, 'version.dll'), 'MZ\0socialclub_emu\0')
-  await write(join(dir, 'socialclub_emu.ini'), `[Settings]\nLanguage=en-US\nUserName=STEAMRIP\nUserId=${opts.userId ?? '101001101010'}\nOffline=true\n`)
+  await write(join(dir, 'socialclub_emu.ini'), `[Settings]\nLanguage=en-US\nUserName=Player\nUserId=${opts.userId ?? '123456789012'}\nOffline=true\n`)
   await write(join(wrapper, 'Read_Me_Instructions.txt'), 'read me')
   await write(join(wrapper, '_CommonRedist', 'vcredist.exe'), 'MZ')
-  const saveDir = join(env.publicDocuments!, 'Socialclub', 'RUNE', 'GTA V', opts.userId ?? '101001101010')
+  const saveDir = join(env.publicDocuments!, 'Socialclub', 'RUNE', 'GTA V', opts.userId ?? '123456789012')
   if (opts.withSaveDir !== false) {
     await write(join(saveDir, 'pc_settings.bin'), 'settings')
     for (const s of opts.userSaves ?? []) await write(join(saveDir, s), `my own progress ${s}`)
@@ -118,7 +118,7 @@ describe('shared classification', () => {
     expect(c.checks[0].message).toMatch(/NexusTools 1\.1\.0\+/)
   })
 
-  it('flags a ReShade preset when ReShade is not installed, and notes it when it is', async () => {
+  it('makes a ReShade preset need ReShade (and the shader pack it uses); NexusForge installs them', async () => {
     const env = fakeEnv(root)
     const dir = join(root, 'Sky')
     await write(join(dir, 'Sky.exe'), 'MZ')
@@ -128,11 +128,16 @@ describe('shared classification', () => {
     const c = await classifyPackage(p, { game, info: infoOf(game, genericIntegration), integration: genericIntegration, env })
     expect(c.kind).toBe('preset')
     expect(c.routes.length).toBe(1)
-    expect(c.checks.find((x) => x.code === 'needs_reshade')?.level).toBe('warning')
+    expect(c.needsLoader).toBe('reshade')
+    expect(c.needsLoaders).toContain('reshade-effects')
+    expect(c.meta?.reshadeEffects).toBe('AdaptiveSharpen.fx')
+    expect(c.checks.find((x) => x.code === 'needs_reshade')).toMatchObject({ level: 'info', message: expect.stringMatching(/installs ReShade from reshade\.me/) })
     await write(join(dir, 'dxgi.dll'), 'MZ\0ReShade by crosire\0')
     expect(await reshadeInstalled(game)).toBe('dxgi.dll')
-    const again = await classifyPackage(p, { game, info: infoOf(game, genericIntegration), integration: genericIntegration, env })
-    expect(again.checks.find((x) => x.code === 'reshade_preset')?.level).toBe('info')
+    const info = infoOf(game, genericIntegration)
+    info.loaders = [{ id: 'reshade', name: 'ReShade', state: 'installed', canInstall: false, canUpdate: false, canRemove: false, required: true, proxy: 'dxgi.dll' }]
+    const again = await classifyPackage(p, { game, info, integration: genericIntegration, env })
+    expect(again.checks.find((x) => x.code === 'needs_reshade')?.message).toMatch(/ReShade is installed for this game \(dxgi\.dll\)/)
   })
 
   it('does not deploy a save game when the game has no known save folder', async () => {
@@ -154,7 +159,7 @@ describe('GTA V save games', () => {
     const { game, saveDir } = await gtaRepack(env)
     const s = await gtaSaveFolder(game, env)
     expect(s.folder?.dir).toBe(saveDir)
-    expect(s.folder?.evidence).toMatch(/UserId=101001101010/)
+    expect(s.folder?.evidence).toMatch(/UserId=123456789012/)
   })
 
   it('does not guess when the folder does not exist yet, or when several profiles have saves', async () => {
@@ -243,11 +248,11 @@ describe('GTA V script mods and runtime evidence', () => {
     expect([c.needsLoader, ...(c.needsLoaders ?? [])]).toEqual(['scripthookv', 'shvdn'])
   })
 
-  // Lines as Script Hook V .NET 3.6.0 wrote them on the test PC (Zombies V built against API 3.7).
+  // Lines as Script Hook V .NET 3.6.0 writes them (Zombies V built against API 3.7).
   const SHVDN_LOG = [
     '[12:35:15] [DEBUG] Loading API from .\\ScriptHookVDotNet2.dll ...',
     '[12:35:15] [DEBUG] Loading API from .\\ScriptHookVDotNet3.dll ...',
-    '[12:35:15] [DEBUG] Loading scripts from E:\\Games\\GTA\\scripts ...',
+    '[12:35:15] [DEBUG] Loading scripts from D:\\Games\\GTA V\\scripts ...',
     '[12:35:15] [DEBUG] Loading assembly ZombiesV.dll ...',
     '[12:35:15] [WARNING] Unable to resolve API version 3.7.0.',
     '[12:35:15] [WARNING] Unable to resolve API version 3.7.0.',

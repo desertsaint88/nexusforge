@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import type { IpcInvokeMap, InvokeChannel } from '@shared/ipc'
-import type { AccountId, ModSort, Settings } from '@shared/types'
+import type { AccountId, ModSort, ReshadeSettingsPatch, ReshadeSetupRequest, Settings } from '@shared/types'
 import { getSettings, setSettings } from './store'
 import { logFilePath, scoped, setLogLevel } from './logger'
 import { run } from './util/exec'
@@ -16,12 +16,40 @@ import * as detect from './mods/detect'
 import * as updates from './mods/updates'
 import * as setup from './integrations/orchestrator'
 import * as diagnostics from './diagnostics/diagnostics'
+import * as reshade from './reshade/service'
 import * as bugreport from './bugreport/bugreport'
 import * as updater from './updater/updater'
 import { forgetIntegration } from './integrations/registry'
 import { applyUiScale } from './window'
 
 const log = scoped('ipc')
+
+const RESHADE_APIS = ['dxgi', 'd3d9', 'opengl', 'vulkan', 'ddraw', 'd3d10', 'd3d11', 'd3d12']
+
+/** Only known values reach the ReShade setup. */
+function reshadeRequest(v: unknown): ReshadeSetupRequest {
+  const r = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const out: ReshadeSetupRequest = { install: r.install === true, cleanup: r.cleanup === true }
+  if (r.api === null || (typeof r.api === 'string' && RESHADE_APIS.includes(r.api))) out.api = r.api as string | null
+  if (r.build === null || r.build === 'standard' || r.build === 'addon') out.build = r.build
+  if (r.packages === null) out.packages = null
+  else if (Array.isArray(r.packages)) out.packages = r.packages.filter((p): p is string => typeof p === 'string' && p.length < 200).slice(0, 100)
+  return out
+}
+
+function reshadePatch(v: unknown): ReshadeSettingsPatch {
+  const r = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const out: ReshadeSettingsPatch = {}
+  if (typeof r.presetPath === 'string' && r.presetPath.length < 500 && !r.presetPath.split(/[\\/]/).includes('..')) out.presetPath = r.presetPath
+  if (typeof r.keyOverlay === 'string') out.keyOverlay = r.keyOverlay
+  if (typeof r.performanceMode === 'boolean') out.performanceMode = r.performanceMode
+  if (r.depth && typeof r.depth === 'object') {
+    const d = r.depth as Record<string, unknown>
+    out.depth = {}
+    for (const k of ['reversed', 'upsideDown', 'logarithmic'] as const) if (typeof d[k] === 'boolean') out.depth[k] = d[k] as boolean
+  }
+  return out
+}
 
 const SORTS: ModSort[] = ['relevance', 'endorsed', 'downloads', 'downloads_recent', 'trending', 'newest', 'updated']
 const modSort = (v: unknown): ModSort | undefined => (SORTS.includes(v as ModSort) ? (v as ModSort) : undefined)
@@ -217,6 +245,11 @@ export function registerIpc(rendererUrl: string): void {
     setup.createShortcut(str(gameId, 'game'), variant === 'vanilla' ? 'vanilla' : 'modded', where === 'desktop' ? 'desktop' : 'startmenu')
   )
   handle('integration:shortcuts', (_e, gameId) => setup.listShortcuts(str(gameId, 'game')))
+
+  handle('reshade:view', (_e, gameId) => reshade.reshadeView(str(gameId, 'game')))
+  handle('reshade:setup', (_e, gameId, req) => rescanAfter(str(gameId, 'game'), reshade.reshadeSetup(gameId, reshadeRequest(req))))
+  handle('reshade:settings', (_e, gameId, patch) => reshade.reshadeSettings(str(gameId, 'game'), reshadePatch(patch)))
+  handle('reshade:remove', (_e, gameId) => rescanAfter(str(gameId, 'game'), reshade.reshadeRemove(gameId)))
 
   handle('diagnostics:run', (_e, gameId) => diagnostics.runDiagnostics(str(gameId, 'game')))
   handle('diagnostics:fix', (_e, gameId, fixId, params) => {

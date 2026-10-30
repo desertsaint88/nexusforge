@@ -2,6 +2,7 @@
 
 import { app, shell } from 'electron'
 import { join } from 'node:path'
+import { authenticode } from '../util/signature'
 import type { IntegrationEnv, IntegrationState } from './types'
 import { createSteamEnv } from './steam-apps'
 import { GITHUB_HOSTS } from './github'
@@ -35,7 +36,8 @@ export function integrationEnv(): IntegrationEnv {
       await shell.openExternal(url)
     },
     fileVersion: readExeVersion,
-    extract: (archive, dest) => extractArchive(archive, dest)
+    extract: (archive, dest) => extractArchive(archive, dest),
+    verifySignature: authenticode
   }
   return env
 }

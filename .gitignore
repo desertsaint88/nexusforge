@@ -7,3 +7,6 @@ release/
 .tour/
 release-next/
 release-test/
+# Settings and checks of the PC the live checks run on (its game library, local folders)
+scripts/local.json
+scripts/smoke-1.2.mjs

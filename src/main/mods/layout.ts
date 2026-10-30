@@ -7,7 +7,7 @@ const METADATA = new Set(['manifest.json', 'icon.png', 'readme.md', 'changelog.m
 
 // Folder names that belong *inside* a game folder, so an archive whose only entry is one of these is
 // already laid out correctly and must not be unwrapped.
-const GAME_DIRS = new Set([
+export const GAME_DIRS = new Set([
   'data', 'bin', 'binaries', 'content', 'bepinex', 'plugins', 'r6', 'red4ext', 'archive', 'mods', 'x64', 'engine', 'scripts',
   'textures', 'meshes', 'sound', 'music', 'interface', 'lua', 'materials', 'models', 'maps', 'skse', 'f4se', 'nativepc', 'paks',
   'game', 'resources', 'dlc', 'audio', 'shaders', 'ui', 'config', 'gamedata', 'melonloader', 'userlibs', 'userdata', 'addons',

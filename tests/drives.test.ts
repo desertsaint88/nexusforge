@@ -45,7 +45,7 @@ describe('release folder names', () => {
   it('drops versions, groups and years', () => {
     expect(cleanGameName('Hell.Let.Loose.Vietnam.v1.4.1.1176458-OFME')).toBe('Hell Let Loose Vietnam')
     expect(cleanGameName('People.Playground.v2026.02.09')).toBe('People Playground')
-    expect(cleanGameName('Grand-Theft-Auto-V-SteamRIP.com')).toBe('Grand Theft Auto V')
+    expect(cleanGameName('Hollow-Knight-SteamRIP.com')).toBe('Hollow Knight')
     expect(cleanGameName('Uplink (GOG)')).toBe('Uplink')
     expect(cleanGameName('Call of Duty - Modern Warfare 4 (2026)')).toBe('Call of Duty - Modern Warfare 4')
     expect(cleanGameName('Way-of-the-Hunter-2-AnkerGames')).toBe('Way of the Hunter 2')

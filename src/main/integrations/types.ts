@@ -81,6 +81,25 @@ export interface IntegrationEnv {
   fileVersion(file: string): Promise<string | undefined>
   /** Unpacks a zip into an empty folder (safety checks included). */
   extract(archive: string, dest: string): Promise<void>
+  /** Authenticode signature of a file: status ("Valid", "UnknownError" for self-signed, "HashMismatch", "NotSigned") and signer thumbprint. */
+  verifySignature?(file: string): Promise<{ status: string; thumbprint?: string } | undefined>
+}
+
+/** ReShade choices NexusForge remembers per game (see reshade/core.ts). */
+export interface ReshadeState {
+  /** Graphics API picked by the user; undefined = detected. */
+  api?: string
+  /** Build picked by the user; undefined = add-on build only when a mod needs it. */
+  build?: 'standard' | 'addon'
+  /** Effect packages (EffectPackages.ini names) picked by the user; undefined = the setup's defaults plus what presets need. */
+  packages?: string[]
+  /** NexusForge wrote ReShade.ini (taken out again with ReShade). */
+  createdIni?: boolean
+  /** The preset NexusForge made active; a preset picked in NexusForge or in ReShade's overlay is never changed again. */
+  autoPreset?: string
+  presetPicked?: boolean
+  /** Copies of ReShade NexusForge moved aside when it took over (restored when its ReShade is removed). */
+  replaced?: Array<{ name: string; backup: string }>
 }
 
 /** What NexusForge remembers about a game's integration between runs. */
@@ -94,6 +113,7 @@ export interface IntegrationState {
   lastLaunch?: LaunchCheck
   /** Files NexusForge's configure step created (UE4SS enabled.txt); removed again when no longer needed. */
   createdFiles?: string[]
+  reshade?: ReshadeState
 }
 
 export interface LoaderRecord {
@@ -140,6 +160,8 @@ export interface LoaderInstallHost {
   installModFile(gameId: string, file: string, meta: { name: string; version?: string; source?: ModSourceRef }): Promise<InstalledMod>
   state(gameId: string): IntegrationState
   saveState(gameId: string, state: IntegrationState): void
+  /** The game's installed mods (loaders that pick a build or packages from what the mods need). */
+  mods?(gameId: string): InstalledMod[] | Promise<InstalledMod[]>
 }
 
 export type StepReporter = (detail: string, progress?: number) => void
@@ -184,7 +206,7 @@ export interface GameIntegration {
    * Save-game packages (see mods/classify.ts): where each save file goes inside the 'saves' target that inspect()
    * reported. Must never overwrite a save the user already has.
    */
-  saveRoutes?(pkg: StagedPackage, saveFiles: string[], target: DeployTarget, game: Game): Promise<{ routes: ModRoute[]; checks: ModCheck[] }>
+  saveRoutes?(pkg: StagedPackage, saveFiles: string[], target: DeployTarget, game: Game, owned?: string[]): Promise<{ routes: ModRoute[]; checks: ModCheck[] }>
   /** Game-specific diagnostic checks. Read-only: nothing may be changed here. */
   diagnose?(ctx: DiagnoseContext): Promise<DiagnosticFinding[]>
 }

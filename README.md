@@ -43,6 +43,12 @@ Download `NexusForge-Setup-<version>.exe` from [Releases](https://github.com/des
   - Terraria: tModLoader through Steam, or its GitHub `tModLoader.zip` for other copies when tModLoader's own start check (`InstallVerifier.cs`: an unmodified `Terraria.exe` of the version a release is made for, no `steam_api.dll`) accepts the copy; NexusForge picks the newest release that does, and never patches that check.
 - Works the same for store copies and plain game folders on any drive. **Proxy DLLs** (`proxy.ts`): loaders start through `winhttp.dll` / `version.dll` / `winmm.dll` / `dwmapi.dll` / `dinput8.dll` next to the game. Copies of games often use those names for their own files (Steam or Social Club emulators, OnlineFix's `winmm.dll`); NexusForge reads what each DLL is and never replaces one that is not the loader's: the loader goes in under another name it supports, or the panel says which files are in the way. Anti-cheat (EasyAntiCheat, BattlEye) is shown as a warning; NexusForge does nothing to get past it.
 
+**ReShade for every game** (`src/main/reshade/`, the ReShade tab)
+- One click installs ReShade from reshade.me: the setup is checked against ReShade's code-signing certificate and the DLL is unpacked from it without running it. Graphics API and DLL name are worked out the way ReShade's setup does (its compatibility list first, then the executable's imports); files of the game are never replaced. Games whose anti-cheat bans ReShade (per that list) are refused.
+- Standard or add-on build (a mod that is a ReShade add-on switches it), shader packs from ReShade's own list, overlay key, active preset (a preset that comes with a mod becomes active until you pick one), performance mode, depth settings from the compatibility list.
+- **Last start** reads ReShade.log: loaded or not, attached to the game, effects that failed to compile, add-ons. A copy under a name the game never loads is flagged with a fix (GTA V loads `dxgi.dll` from System32, so ReShade goes in as `ReShade64.asi` through Script Hook V's ASI loader). A ReShade installed by hand can be taken over; it is kept as a backup and comes back when NexusForge's copy is removed.
+- Mods that bundle their own ReShade use the managed one; archives with one folder per program ("GTA V/" next to "Minecraft/") install only the folder for the game.
+
 **Verification & diagnostics** (details: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md))
 - Results say what was actually checked: **verified** (files in place and the integration checked the game will load them), **deployed, loading not confirmed** (files in place and checked, nothing more is knowable), failed / rolled back. Nothing is shown as loaded until the loader's log says so.
 - **Shared package strategies** for every game, before the game's own rules: setup programs are never copied into a game (*Run installer* starts one after asking), save games go into the game's real save folder in a free slot or are not deployed, mods for closed mod managers (NexusTools) are recognized instead of spread over the game folder, ReShade presets are flagged when ReShade isn't installed.
@@ -78,7 +84,8 @@ npm test             # unit tests (deploy engine, conflicts, scanners, archive l
 npm run build
 npm run smoke        # end-to-end run of the built app with screenshots in .smoke/shots
 node scripts/smoke-sources.mjs   # live checks against the real mod sites (.smoke/sources/shots)
-node scripts/smoke-1.2.mjs       # artwork, installed-mod detection, sorting, look (this PC's library, read-only)
+node scripts/probe-reshade-ui.mjs    # ReShade tab screenshots for games of the real library (read-only copy of the data file)
+node scripts/e2e-reshade.mjs         # ReShade flow end to end on a stand-in GTA V folder (fix, remove, a mod that needs ReShade)
 node scripts/smoke-cloudflare.mjs  # Nexus login/registration pass Cloudflare inside the app (no automation driver)
 npx vitest run --config scripts/live/vitest.live.config.ts   # live checks: real loader downloads, real starts of a copied game, this PC's library (read-only)
 node scripts/probe-diagnostics.mjs   # Diagnose on a copy of the real data file (game folders only read), reports in .smoke/diagnostics
@@ -89,6 +96,8 @@ npm run release      # dist + scripts/release.mjs: draft release, upload install
 node scripts/live/update-e2e.mjs <older NexusForge-Setup.exe> <released version>
                      # real update test: installs the older build in .smoke, lets it update itself from GitHub, uninstalls it
 ```
+
+Checks that need the dev PC's own setup (games its library must list, games to screenshot, a local Terraria or mod download) read `scripts/local.json`, which stays out of git; see `scripts/local.example.json`. Without it they are skipped.
 
 Build an older test installer without publishing it: `npx electron-builder --win --publish never -c.extraMetadata.version=1.6.9 -c.directories.output=release-test`.
 

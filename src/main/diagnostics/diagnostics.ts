@@ -19,6 +19,7 @@ import { activeProfile } from '../mods/profiles'
 import { integrationEnv, integrationState } from '../integrations/env'
 import { forgetIntegration } from '../integrations/registry'
 import { installLoader, setupAndDeploy } from '../integrations/orchestrator'
+import { reshadeSetup } from '../reshade/service'
 import { runChecks } from './core'
 import { reportMarkdown } from './report'
 
@@ -62,7 +63,7 @@ export async function runDiagnostics(gameId: string): Promise<DiagnosticReport> 
   return report
 }
 
-const FIXES = new Set(['deploy', 'install-loader', 'relayout', 'set-deploy-dir', 'run-installer', 'remove-mod'])
+const FIXES = new Set(['deploy', 'install-loader', 'relayout', 'set-deploy-dir', 'run-installer', 'remove-mod', 'reshade-setup'])
 
 /** Runs one repair the user confirmed, then checks again. */
 export async function applyFix(gameId: string, fixId: string, params: Record<string, string> = {}): Promise<DiagnosticReport> {
@@ -96,6 +97,16 @@ export async function applyFix(gameId: string, fixId: string, params: Record<str
       forgetIntegration(gameId)
       forgetInspection(gameId)
       await setupAndDeploy(gameId)
+      break
+    }
+    case 'reshade-setup': {
+      // ReShade's add-on build, or more shader packs (names from ReShade's own list).
+      await reshadeSetup(gameId, {
+        install: params.cleanup !== '1',
+        cleanup: params.cleanup === '1',
+        ...(params.build === 'addon' || params.build === 'standard' ? { build: params.build } : {}),
+        ...(params.packages ? { packages: params.packages.split('|').filter(Boolean).slice(0, 100) } : {})
+      })
       break
     }
     case 'run-installer': {

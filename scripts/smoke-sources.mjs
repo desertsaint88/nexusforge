@@ -4,6 +4,7 @@ import { _electron as electron } from 'playwright-core'
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import electronPath from 'electron'
+import { local } from './local-config.mjs'
 
 const root = join(import.meta.dirname, '..')
 const base = join(root, '.smoke', 'sources')
@@ -101,18 +102,14 @@ await safe('drives', async () => {
   const names = games.map((g) => g.name)
   // Titles may already carry the store's spelling ("Hell Let Loose: Vietnam"); punctuation doesn't count.
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-  check('release folder names cleaned', names.some((n) => norm(n) === 'hellletloosevietnam') && !names.some((n) => /OFME|v\d+ \d+ \d+/.test(n)), names.filter((n) => /hell|people|uplink/i.test(n)).join(', '))
-  // Every game installed on this PC (C:\Games, E:\Games incl. "From D", Steam, the PS2 disc for PCSX2).
-  const expected = [
-    'BeamNG.drive', 'Bodycam', 'Call of Duty - Modern Warfare 4', 'Firewatch', 'GROUND BRANCH', 'Ready Or Not', 'X-Plane 12', 'Jak II - Renegade (PS2)',
-    'VRChat', 'Casualties: Unknown Demo', 'Zula Global', 'ALTEREDBLOOD+ Demo', 'Call of Duty®',
-    'Call Of Duty Black Ops III', 'GarrysMod', 'Grand Theft Auto V', 'Hell Let Loose Vietnam', 'People Playground', 'Sniper Killer', 'Watch Dogs',
-    'Way of the Hunter 2', 'Wolfenstein Youngblood', 'Evil Egg', 'FNAF In Real Time', 'Rolla Demo', 'Terraria', 'Uplink'
-  ]
+  check('release folder names cleaned', !names.some((n) => /OFME|SteamRIP|FitGirl|-Repack|v\d+ \d+ \d+/i.test(n)), `${names.length} names`)
+  // The games this PC's library must list come from scripts/local.json (not in git).
+  const expected = local.libraryGames ?? []
   const missing = expected.filter((n) => !names.some((x) => norm(x) === norm(n)))
-  check(`all ${expected.length} games on this PC listed`, missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : `${games.length} games in the library`)
-  const jak = games.find((g) => /Jak II/.test(g.name))
-  check('PS2 game starts in PCSX2', Boolean(jak && /pcsx2/i.test(jak.launch.exe ?? '') && jak.launch.args?.some((a) => /\.iso$/i.test(a))), jak ? `${jak.launch.exe} ${jak.launch.args?.join(' ')}` : 'not found')
+  if (expected.length) check(`all ${expected.length} expected games listed`, missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : `${games.length} games in the library`)
+  else console.log('SKIP  expected games (no libraryGames in scripts/local.json)')
+  const ps2 = games.find((g) => /pcsx2/i.test(g.launch.exe ?? ''))
+  if (ps2) check('PS2 game starts in PCSX2', Boolean(ps2.launch.args?.some((a) => /\.iso$/i.test(a))), `${ps2.launch.exe} ${ps2.launch.args?.join(' ')}`)
   const beam = games.find((g) => g.name === 'BeamNG.drive')
   check('BeamNG deploys into its user folder', Boolean(beam && /BeamNG\.drive[\\/]current[\\/]mods$/i.test(beam.modding.targetDir)), beam?.modding.targetDir)
   await page.getByRole('button', { name: /^Library/ }).first().click()

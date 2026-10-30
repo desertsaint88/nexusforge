@@ -126,3 +126,47 @@ export async function steamApp(steamRoot: string, appId: string, name: string, i
   )
   return dir
 }
+
+/** A minimal PE file: machine, imported DLLs, optionally a certificate table (signed). */
+export function fakePe(opts: { machine?: 'x64' | 'x86'; imports?: string[]; signed?: boolean } = {}): Buffer {
+  const x64 = (opts.machine ?? 'x64') === 'x64'
+  const optSize = x64 ? 240 : 224
+  const peOff = 64
+  const secTable = peOff + 24 + optSize
+  const raw = 0x400
+  const va = 0x1000
+  const imports = opts.imports ?? []
+  const descs = Buffer.alloc((imports.length + 1) * 20)
+  const names: Buffer[] = []
+  let nameOff = descs.length
+  imports.forEach((n, i) => {
+    descs.writeUInt32LE(va + nameOff, i * 20 + 12)
+    const b = Buffer.from(`${n}\0`, 'latin1')
+    names.push(b)
+    nameOff += b.length
+  })
+  const section = Buffer.concat([descs, ...names])
+  const file = Buffer.alloc(raw + section.length + 16)
+  file.write('MZ', 0, 'ascii')
+  file.writeUInt32LE(peOff, 0x3c)
+  file.write('PE\0\0', peOff, 'ascii')
+  file.writeUInt16LE(x64 ? 0x8664 : 0x14c, peOff + 4)
+  file.writeUInt16LE(1, peOff + 6)
+  file.writeUInt16LE(optSize, peOff + 20)
+  const opt = peOff + 24
+  file.writeUInt16LE(x64 ? 0x20b : 0x10b, opt)
+  const dirs = opt + (x64 ? 112 : 96)
+  file.writeUInt32LE(va, dirs + 8)
+  file.writeUInt32LE(descs.length, dirs + 12)
+  if (opts.signed) {
+    file.writeUInt32LE(raw + section.length, dirs + 32)
+    file.writeUInt32LE(16, dirs + 36)
+  }
+  file.write('.idata', secTable, 'ascii')
+  file.writeUInt32LE(section.length, secTable + 8)
+  file.writeUInt32LE(va, secTable + 12)
+  file.writeUInt32LE(section.length, secTable + 16)
+  file.writeUInt32LE(raw, secTable + 20)
+  section.copy(file, raw)
+  return file
+}

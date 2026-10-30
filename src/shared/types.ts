@@ -172,6 +172,8 @@ export type ModKind = 'loader' | 'plugin' | 'tmod' | 'world' | 'player' | 'resou
 export interface SkippedFile {
   path: string
   reason: string
+  /** Taken out of the route that would have carried it; a route of its own puts it elsewhere (a preset next to ReShade). */
+  moved?: boolean
 }
 
 export interface ModCheck {
@@ -472,6 +474,90 @@ export interface LoaderStatus {
   proxy?: string
   /** An installed mod needs it. */
   required: boolean
+  /** It is installed, but an enabled mod needs more than what is there (another build, more packages): set up installs it again. */
+  refresh?: boolean
+}
+
+/** Everything the ReShade tab shows for one game. */
+export interface ReshadeView {
+  gameId: string
+  /** The executable ReShade goes next to, and why that one. */
+  exe?: string
+  exeName?: string
+  dir?: string
+  note?: string
+  arch?: string
+  api: {
+    detected?: string
+    source: 'compat' | 'imports' | 'dll' | 'dxvk' | 'none'
+    evidence: string
+    /** Picked by the user (undefined = detected). */
+    chosen?: string
+    effective?: string
+    options: Array<{ id: string; label: string; module?: string }>
+  }
+  compat?: { listed: boolean; banned: boolean; renderApi?: string }
+  status: LoaderStatus
+  effects?: LoaderStatus
+  copies: Array<{ name: string; version?: string; build: 'standard' | 'addon'; managed: boolean }>
+  latest?: { version: string; released?: string }
+  build: { chosen?: 'standard' | 'addon'; effective: 'standard' | 'addon'; neededBy: string[] }
+  ini?: {
+    path: string
+    exists: boolean
+    presetPath?: string
+    keyOverlay?: string
+    keyLabel: string
+    performanceMode: boolean
+    depth: { reversed: boolean; upsideDown: boolean; logarithmic: boolean }
+    effectSearchPaths: string[]
+  }
+  presets: Array<{ path: string; name: string; active: boolean; techniques: number; missing: Array<{ file: string; pack?: string }> }>
+  packages: Array<{ id: string; name: string; description: string; required: boolean; defaultOn: boolean; installed: boolean; selected: boolean; neededFor: string[]; repositoryUrl?: string }>
+  /** Effect files in reshade-shaders\, and whether NexusForge's shader packs are installed. */
+  shaders?: { effects: number; managed: boolean }
+  /** ReShade.log of the last start. */
+  lastStart?: {
+    /** Still the note ReShade's setup leaves: ReShade has never been loaded. */
+    placeholder: boolean
+    at: number
+    version?: string
+    bits?: number
+    module?: string
+    runtime: boolean
+    api?: string
+    gpu?: string
+    compiled: number
+    failed: Array<{ file: string; errors: string[] }>
+    addons: Array<{ name: string; version?: string }>
+    errors: string[]
+    warnings: string[]
+    exited: boolean
+    logFile: string
+  }
+  /** Switched-on mods that need ReShade. */
+  usedBy: string[]
+  running: boolean
+}
+
+export interface ReshadeSettingsPatch {
+  presetPath?: string
+  /** ReShade's key format: "virtual key code,ctrl,shift,alt" ("36,0,0,0" = Home). */
+  keyOverlay?: string
+  performanceMode?: boolean
+  depth?: { reversed?: boolean; upsideDown?: boolean; logarithmic?: boolean }
+}
+
+export interface ReshadeSetupRequest {
+  /** Graphics API ('dxgi', 'd3d9', 'opengl', …); null = detect again. */
+  api?: string | null
+  build?: 'standard' | 'addon' | null
+  /** Shader pack names; null = the defaults plus what presets need. */
+  packages?: string[] | null
+  /** Install / reinstall now (otherwise only the choices are saved). */
+  install?: boolean
+  /** Move copies of ReShade NexusForge doesn't manage out of the game folder (kept as a backup). */
+  cleanup?: boolean
 }
 
 export interface LaunchOption {

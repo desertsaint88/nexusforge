@@ -7,6 +7,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } fr
 import os from 'node:os'
 import { join } from 'node:path'
 import electronPath from 'electron'
+import { probeGames } from './local-config.mjs'
 
 const root = join(import.meta.dirname, '..')
 const base = join(root, '.smoke', 'diagnostics')
@@ -42,7 +43,7 @@ for (const g of games) {
 }
 writeFileSync(join(base, 'reports.json'), JSON.stringify(out, null, 2))
 
-const wanted = (process.env.GAMES ?? 'Grand Theft Auto V|Watch_Dogs|Sky: Children of the Light').split('|')
+const wanted = probeGames('diagnostics', ['Grand Theft Auto V'])
 for (const name of wanted) {
   const g = games.find((x) => x.name === name)
   if (!g) continue

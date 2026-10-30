@@ -45,7 +45,7 @@ const UNKNOWN: ModRuntime = { state: 'unknown', evidence: [] }
 const NOT_GAME = /^(_?common_?redist|_?redist|redistributables?|directx|vcredist|support|_commonredist|__installer|installers?)$/i
 
 /**
- * The deploy folder is a wrapper around the real game folder (repacks: "<Game>-SteamRIP.com\<Game>\game.exe"):
+ * The deploy folder is a wrapper around the real game folder (repacks: "<Game>-Repack\<Game>\game.exe"):
  * it holds nothing but the folder with the .exe, read-me files and redistributables.
  */
 export async function wrapperFolder(game: Pick<Game, 'exePath' | 'modding'>): Promise<string | undefined> {

@@ -112,7 +112,7 @@ const profileLocks = new Map<string, Promise<unknown>>()
  * overwrites the other's change and a new game doesn't get two "Default" profiles.
  */
 export function addModToProfiles(gameId: string, modId: string): Promise<void> {
-  const run = async () => {
+  return locked(gameId, async () => {
     const { profiles, activeId } = await listProfiles(gameId)
     const mods = db().get('mods')[gameId] ?? {}
     for (const p of profiles) {
@@ -120,7 +120,21 @@ export function addModToProfiles(gameId: string, modId: string): Promise<void> {
       if (p.id === activeId && !p.enabled.includes(modId)) p.enabled.push(modId)
       await saveProfile(p)
     }
-  }
+  })
+}
+
+/** Switches mods on (true) or off (false) in the active profile. Returns the ids whose state changed. */
+export function setEnabledInActive(gameId: string, modIds: string[], on: boolean): Promise<string[]> {
+  return locked(gameId, async () => {
+    const p = await activeProfile(gameId)
+    const changed = modIds.filter((id) => p.enabled.includes(id) !== on)
+    if (!changed.length) return []
+    await saveProfile({ ...p, enabled: on ? [...p.enabled, ...changed] : p.enabled.filter((id) => !changed.includes(id)) })
+    return changed
+  })
+}
+
+function locked<T>(gameId: string, run: () => Promise<T>): Promise<T> {
   const next = (profileLocks.get(gameId) ?? Promise.resolve()).catch(() => {}).then(run)
   profileLocks.set(gameId, next)
   void next.finally(() => {

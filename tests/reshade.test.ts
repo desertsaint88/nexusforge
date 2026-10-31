@@ -561,6 +561,31 @@ describe('ReShade content of other games', () => {
     expect(c.needsLoaders).toEqual([RESHADE_ID, EFFECTS_ID].filter((x) => x !== c.needsLoader))
   })
 
+  it('puts textures a preset names into reshade-shaders\\Textures, and an add-on\'s settings file next to the add-on', async () => {
+    const env = onlineEnv()
+    const exeDir = join(root, 'Game', 'bin')
+    await write(join(exeDir, 'game.exe'), fakePe({ imports: ['d3d11.dll'] }))
+    const game = gameOf({ name: 'Some Game', installDir: join(root, 'Game'), exePath: join(exeDir, 'game.exe') })
+    game.modding.targetDir = join(root, 'Game', 'mods')
+    const p = await pkg(
+      {
+        'Moody.ini': 'PreprocessorDefinitions=fLUT_TextureName="MoodyLut.png"\nTechniques=LUT@LUT.fx\n\n[LUT.fx]\nfLUT_AmountLuma=1\n',
+        'MoodyLut.png': 'png',
+        'preview.jpg': 'jpg',
+        'Addons/ShaderToggler.addon64': 'MZ\0ReShadeRegisterAddon\0',
+        'Addons/ShaderToggler.ini': '[General]\nToggleKey=45\n'
+      },
+      'Moody'
+    )
+    const c = await classifyPackage(p, { game, info: infoOf(game, genericIntegration), integration: genericIntegration, env })
+    const files = await planFilesFor({ stagingDir: p.dir, rootPath: c.rootPath, routes: c.routes, skipped: c.skipped })
+    const where = files.map((f) => `${f.target}:${f.rel}`).sort()
+    expect(where).toEqual(expect.arrayContaining(['reshade:Moody.ini', 'reshade:ShaderToggler.addon64', 'reshade:ShaderToggler.ini', 'reshade:reshade-shaders/Textures/MoodyLut.png']))
+    // A preview picture nothing names is not a texture.
+    expect(where.some((w) => w.includes('reshade-shaders/Textures/preview.jpg'))).toBe(false)
+    expect(c.meta?.reshadeAddon).toBe('1')
+  })
+
   it('every integration gets the ReShade loaders, and a reshade target only when a mod uses one', async () => {
     const env = onlineEnv()
     const exeDir = join(root, 'Game', 'bin')
@@ -645,13 +670,110 @@ describe('ReShade.ini', () => {
     const env = onlineEnv()
     const { game, dir } = await gtaGame()
     await write(join(dir, 'dxgi.dll'), "MZ\0crosire's ReShade\0")
-    await write(join(dir, 'ReShade.ini'), '[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nTextureSearchPaths=.\\reshade-shaders\\Textures\\**\nPresetPath=.\\Mine.ini\nPreprocessorDefinitions=X=1\n[INPUT]\nKeyOverlay=45,0,0,0\n[PROXY]\nEnableProxyLibrary=0\n')
+    await write(join(dir, 'ReShade.ini'), '[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nTextureSearchPaths=.\\reshade-shaders\\Textures\\**\nPresetPath=.\\Mine.ini\nPreprocessorDefinitions=X=1\n[INPUT]\nKeyOverlay=45,0,0,0\n[OVERLAY]\nTutorialProgress=4\n[PROXY]\nEnableProxyLibrary=0\n')
     await write(join(dir, 'Mine.ini'), 'Techniques=Vibrance@Vibrance.fx\n')
     const before = await fsp.readFile(join(dir, 'ReShade.ini'), 'utf8')
     const states: Record<string, IntegrationState> = {}
     await configureReshade(game, infoOf(game, gta5Integration), { entries: [] } as unknown as DeployManifest, [], env, host(states))
     expect(await fsp.readFile(join(dir, 'ReShade.ini'), 'utf8')).toBe(before)
     expect(states['test:gta'].reshade?.createdIni).toBeFalsy()
+  })
+
+  it("skips ReShade's tutorial (its banner stays on screen until it is done), but not one the user is half way through", () => {
+    const fresh = new IniDoc()
+    applyIniDefaults(fresh)
+    expect(fresh.get('OVERLAY', 'TutorialProgress')).toBe('4')
+    const never = IniDoc.parse('[OVERLAY]\nTutorialProgress=0\n')
+    expect(applyIniDefaults(never)).toBe(true)
+    expect(never.get('OVERLAY', 'TutorialProgress')).toBe('4')
+    const halfway = IniDoc.parse('[OVERLAY]\nTutorialProgress=2\n')
+    applyIniDefaults(halfway)
+    expect(halfway.get('OVERLAY', 'TutorialProgress')).toBe('2')
+  })
+
+  it('keeps ReShade.ini while ReShade is turned off, and takes it out when ReShade is gone', async () => {
+    const env = onlineEnv()
+    const { game, dir } = await gtaGame()
+    const info = infoOf(game, gta5Integration, [{ id: 'game', label: 'Game folder', dir }])
+    const rs = { id: 'rs', name: 'ReShade', loaderId: RESHADE_ID, installedAt: 1, routes: [{ from: 'ReShade64.dll', target: 'game', to: 'ReShade64.asi' }] } as unknown as InstalledMod
+    await write(join(dir, 'ReShade64.asi'), "MZ\0crosire's ReShade\0")
+    const states: Record<string, IntegrationState> = {}
+    const on = { ...host(states), enabled: async () => new Set(['rs']) }
+    await configureReshade(game, info, { entries: [{ modId: 'rs', target: 'game', rel: 'ReShade64.asi' }] } as unknown as DeployManifest, [rs], env, on)
+    expect(states['test:gta'].reshade?.createdIni).toBe(true)
+    // Turned off: the asi is out of the game, ReShade.ini (key, preset, depth) stays for later.
+    await fsp.rm(join(dir, 'ReShade64.asi'))
+    const off = { ...host(states), enabled: async () => new Set<string>() }
+    expect((await configureReshade(game, info, { entries: [] } as unknown as DeployManifest, [rs], env, off)).removed).toBe(false)
+    expect(await fsp.access(join(dir, 'ReShade.ini')).then(() => true, () => false)).toBe(true)
+    // Removed (no ReShade mod any more): it goes.
+    expect((await configureReshade(game, info, { entries: [] } as unknown as DeployManifest, [], env, off)).removed).toBe(true)
+  })
+
+  it('a preset mod installed after the user picked a preset becomes the active one', async () => {
+    const env = onlineEnv()
+    const { game, dir } = await gtaGame()
+    await write(join(dir, 'ReShade64.asi'), "MZ\0crosire's ReShade\0")
+    await write(join(dir, 'Mine.ini'), 'Techniques=Vibrance@Vibrance.fx\n')
+    await write(join(dir, 'Old.ini'), 'Techniques=SMAA@SMAA.fx\n')
+    await write(join(dir, 'New.ini'), 'Techniques=LumaSharpen@LumaSharpen.fx\n')
+    await write(join(dir, 'ReShade.ini'), '[GENERAL]\nPresetPath=.\\Mine.ini\n[OVERLAY]\nTutorialProgress=4\n')
+    const info = infoOf(game, gta5Integration, [{ id: 'game', label: 'Game folder', dir }])
+    const rs = { id: 'rs', name: 'ReShade', loaderId: RESHADE_ID, installedAt: 1, routes: [{ from: 'ReShade64.dll', target: 'game', to: 'ReShade64.asi' }] } as unknown as InstalledMod
+    const old = { id: 'old', name: 'Old', installedAt: 1000 } as unknown as InstalledMod
+    const states: Record<string, IntegrationState> = { 'test:gta': { loaders: {}, reshade: { presetPicked: true, presetPickedAt: 2000 } } }
+    const entries = [{ modId: 'rs', target: 'game', rel: 'ReShade64.asi' }, { modId: 'old', target: 'game', rel: 'Old.ini' }]
+    await configureReshade(game, info, { entries } as unknown as DeployManifest, [rs, old], env, host(states))
+    expect(IniDoc.parse(await fsp.readFile(join(dir, 'ReShade.ini'), 'utf8')).get('GENERAL', 'PresetPath')).toBe('.\\Mine.ini')
+    const fresh = { id: 'new', name: 'New', installedAt: 3000 } as unknown as InstalledMod
+    const r = await configureReshade(game, info, { entries: [...entries, { modId: 'new', target: 'game', rel: 'New.ini' }] } as unknown as DeployManifest, [rs, old, fresh], env, host(states))
+    expect(r.preset).toBe('.\\New.ini')
+    expect(states['test:gta'].reshade).toMatchObject({ presetPicked: false, autoPreset: '.\\New.ini' })
+  })
+})
+
+describe("ReShade's off switch", () => {
+  it('GTA V: turned off with an old dxgi.dll left in the folder is "off", never "needs repair"', async () => {
+    const env = onlineEnv()
+    const { game, dir } = await gtaGame()
+    await write(join(dir, 'dxgi.dll'), "MZ\0crosire's ReShade post-processing injector for 64-bit\0")
+    await write(join(dir, 'ReShade.log'), "\r\nIf you are reading this after launching the game at least once, it likely means ReShade was not loaded by the game.\r\n")
+    const old = new Date(Date.now() - 3600_000)
+    await fsp.utimes(join(dir, 'ReShade.log'), old, old)
+    await write(join(dir, 'ScriptHookV.log'), '[12:11:54] INIT: Started')
+    const managed = { id: 'rs', name: 'ReShade', loaderId: RESHADE_ID, version: '6.8.0', meta: { build: 'standard' }, routes: [{ from: 'ReShade64.dll', target: 'game', to: 'ReShade64.asi' }] } as unknown as InstalledMod
+    const fx = { id: 'fx', name: 'ReShade shader packs', loaderId: EFFECTS_ID, stagingDir: join(root, 'nofx'), updatedAt: 1, version: '2026.10.30', meta: { packages: 'Standard effects' } } as unknown as InstalledMod
+    const s = await reshadeLoader.status(game, infoOf(game, gta5Integration), env, { loaders: {} }, [managed, fx], new Set())
+    expect(s).toMatchObject({ state: 'off', canInstall: false, canUpdate: false, canRemove: true, version: '6.8.0' })
+    expect(s.detail).toMatch(/^Turned off/)
+    expect(s.detail).toMatch(/dxgi\.dll in the game folder is an old copy of ReShade that GTA5\.exe never loads/)
+    expect(await effectsLoader.status(game, infoOf(game, gta5Integration), env, { loaders: {} }, [managed, fx], new Set())).toMatchObject({ state: 'off' })
+    // Diagnose: nothing to repair, only the unused copy (with a "move it out", not an install).
+    const findings = await diagnoseReshade({ game, mods: [managed, fx], enabled: new Set(), env, state: { loaders: {} } })
+    expect(findings).toEqual([expect.objectContaining({ code: 'NF-RSH-008', severity: 'info', fixes: [expect.objectContaining({ label: 'Move it out', params: { cleanup: '1' } })] })])
+    // Switched on but not deployed yet: waiting for the deploy, still not "broken".
+    const pending = await reshadeLoader.status(game, infoOf(game, gta5Integration), env, { loaders: {} }, [managed, fx], new Set(['rs', 'fx']))
+    expect(pending).toMatchObject({ state: 'missing', proxy: 'ReShade64.asi', detail: expect.stringMatching(/next deploy/) })
+  })
+
+  it('a copy installed by hand that the off switch moved out is "off" too', async () => {
+    const env = onlineEnv()
+    const dir = join(root, 'Plain')
+    await write(join(dir, 'game.exe'), fakePe({ imports: ['d3d11.dll'] }))
+    const g = gameOf({ name: 'Plain', installDir: dir, exePath: join(dir, 'game.exe') })
+    const s = await reshadeLoader.status(g, infoOf(g, genericIntegration), env, { loaders: {}, reshade: { parked: [{ name: 'dxgi.dll', backup: join(root, 'park', 'dxgi.dll') }] } }, [], new Set())
+    expect(s).toMatchObject({ state: 'off', canRemove: false })
+  })
+
+  it('a deployment with ReShade turned off reports it as a note, not as a failure', async () => {
+    const env = onlineEnv()
+    const { game } = await gtaGame()
+    const managed = { id: 'rs', name: 'ReShade', loaderId: RESHADE_ID, routes: [{ from: 'ReShade64.dll', target: 'game', to: 'ReShade64.asi' }] } as unknown as InstalledMod
+    const preset = { id: 'p', name: 'Cinematic', needsLoader: RESHADE_ID } as unknown as InstalledMod
+    const checks = await withReshade(gta5Integration).verify!(game, infoOf(game, gta5Integration), { entries: [{ modId: 'p', target: 'game', rel: 'Cinematic.ini' }] } as unknown as DeployManifest, [managed, preset], env)
+    const off = checks.find((c) => c.label === 'ReShade is turned off')
+    expect(off).toMatchObject({ ok: false, level: 'info', detail: expect.stringMatching(/Cinematic takes effect when ReShade is on again/) })
+    expect(checks.some((c) => !c.ok && c.level === 'error')).toBe(false)
   })
 })
 

@@ -213,7 +213,7 @@ export interface ReshadeCopy {
   build: ReshadeBuild
 }
 
-const ASI_RESHADE = /^reshade(32|64)?\.asi$/i
+export const ASI_RESHADE = /^reshade(32|64)?\.asi$/i
 
 /** Every ReShade in a folder: under one of its DLL names, or as an .asi for an ASI loader. */
 export async function findReshade(dir: string): Promise<ReshadeCopy[]> {
@@ -352,6 +352,21 @@ function reshadeState(state: IntegrationState): ReshadeState {
   return state.reshade ?? {}
 }
 
+/**
+ * The user turned ReShade off: NexusForge's copy is switched off in the active profile (the off switch, or the
+ * Mods tab), or the off switch moved a copy installed by hand out of the game. Never a reason to repair it.
+ */
+export function reshadeOff(mods: InstalledMod[], enabled: ReadonlySet<string> | undefined, rs: ReshadeState): boolean {
+  const managed = mods.find((m) => m.loaderId === RESHADE_ID)
+  if (managed) return Boolean(enabled && !enabled.has(managed.id))
+  return Boolean(rs.parked?.length)
+}
+
+/** Copies the game never loads (dxgi.dll next to GTA5.exe), in words. */
+function inertWords(inert: ReshadeCopy[], exeName: string): string {
+  return inert.length ? ` ${inert.map((c) => c.name).join(', ')} in the game folder is an old copy of ReShade that ${exeName} never loads, so it does nothing (the ReShade tab can move it out).` : ''
+}
+
 /** The API NexusForge installs for: the user's pick, else the detected one. */
 export async function effectiveApi(t: RenderTarget, rs: ReshadeState): Promise<{ api?: ReshadeApi; dx?: string; detected: ApiDetection }> {
   const detected = await detectApi(t)
@@ -369,7 +384,7 @@ async function managedModuleNames(mod: InstalledMod | undefined): Promise<string
 export const reshadeLoader: LoaderAdapter = {
   id: RESHADE_ID,
   name: 'ReShade',
-  async status(game, _info, env, state, mods): Promise<LoaderStatus> {
+  async status(game, _info, env, state, mods, enabled): Promise<LoaderStatus> {
     const summary = 'Post-processing for the game\'s picture (sharpening, colors, ambient occlusion, …) with presets and shader packs. In game, Home opens its overlay.'
     const managed = mods.find((m) => m.loaderId === RESHADE_ID)
     const required = mods.some((m) => needs(m, RESHADE_ID))
@@ -400,13 +415,29 @@ export const reshadeLoader: LoaderAdapter = {
     const live = asiOnly ? copies.filter((c) => ASI_RESHADE.test(c.name)) : copies
     const inert = copies.filter((c) => !live.includes(c))
     const inertNote = inert.length && live.length ? ` ${inert.map((c) => c.name).join(', ')} (also ReShade) is never loaded by the game; the ReShade tab can move it out.` : ''
+    if (reshadeOff(mods, enabled, rs)) {
+      const ownNames = new Set(ours.map((n) => n.toLowerCase()))
+      const stillLoaded = live.filter((c) => !ownNames.has(c.name.toLowerCase()))
+      return {
+        ...base,
+        dir,
+        latest,
+        version: managed?.version,
+        state: 'off',
+        canInstall: false,
+        canUpdate: false,
+        warning: stillLoaded.length ? `${stillLoaded.map((c) => c.name).join(', ')} (installed by hand) is still in the game folder and ${t.exeName} still loads it; the off switch in the ReShade tab moves it out too.` : undefined,
+        detail: `Turned off: ReShade is not in ${game.name} right now. Its settings, presets and shader packs are kept, and turning it on puts it back.${inertWords(inert, t.exeName)}`
+      }
+    }
     if (live.length > 1) {
       return { ...base, dir, latest, state: 'broken', canInstall: false, canUpdate: false, warning, version: live[0].version, detail: `ReShade is in the game folder twice (${live.map((c) => c.name).join(' and ')}), so it would hook the game twice. Keep one of them (the ReShade tab shows which one NexusForge manages).` }
     }
     const { api, dx, detected } = await effectiveApi(t, rs)
     // Not 'unsupported': the ReShade tab can still switch it to DirectX / OpenGL when the game runs with those too.
     if (api === 'vulkan' && !copies.length) return { ...base, dir, latest, state: 'missing', canInstall: false, canUpdate: false, warning, blocked: `${detected.source === 'dxvk' ? detected.evidence + ' ' : ''}${VULKAN_NOTE}` }
-    const copy = live[0] ?? copies[0]
+    // NexusForge's own copy not deployed yet: an old copy the game never loads doesn't make it "broken".
+    const copy = live[0] ?? copies.find((c) => ours.some((n) => n.toLowerCase() === c.name.toLowerCase())) ?? (managed ? undefined : copies[0])
     if (copy) {
       const mine = ours.some((n) => n.toLowerCase() === copy.name.toLowerCase())
       if (mine && managed) {
@@ -468,7 +499,7 @@ export const reshadeLoader: LoaderAdapter = {
       return { ...base, dir, latest, state: 'missing', canInstall: false, canUpdate: false, warning, blocked: `ReShade loads as ${names.join(' or ')} next to ${t.exeName}, and ${choice.taken.map((x) => `${x.name} is ${x.label}`).join(', ')}. NexusForge doesn't replace files that came with the game.` }
     }
     const fallback = choice.fallback ? ` ${choice.fallback} next to the game is ${choice.taken.find((x) => x.name.toLowerCase() === choice.fallback!.toLowerCase())?.label}; it stays, and ReShade goes in as ${choice.name}.` : ''
-    if (managed) return { ...base, dir, version: managed.version, latest, state: 'missing', canInstall: false, canUpdate: false, warning, proxy: choice.name, detail: `In NexusForge storage; it goes into the game with the next deploy.${fallback}` }
+    if (managed) return { ...base, dir, version: managed.version, latest, state: 'missing', canInstall: false, canUpdate: false, warning, proxy: choice.name, detail: `In NexusForge storage; it goes into the game with the next deploy.${fallback}${inertWords(inert, t.exeName)}` }
     return {
       ...base,
       dir,
@@ -551,7 +582,7 @@ export async function layoutEffectPackage(extracted: string, pkg: EffectPackage,
 export const effectsLoader: LoaderAdapter = {
   id: EFFECTS_ID,
   name: 'ReShade shader packs',
-  async status(game, _info, env, state, mods): Promise<LoaderStatus> {
+  async status(game, _info, env, state, mods, enabled): Promise<LoaderStatus> {
     const managed = mods.find((m) => m.loaderId === EFFECTS_ID)
     const required = mods.some((m) => needs(m, EFFECTS_ID))
     const installed = (managed?.meta?.packages ?? '').split('|').filter(Boolean)
@@ -567,6 +598,9 @@ export const effectsLoader: LoaderAdapter = {
       dir: t ? join(t.dir, 'reshade-shaders') : undefined
     }
     if (!t || t.compat?.banned) return { ...base, state: 'unsupported', canInstall: false, canUpdate: false, blocked: t ? 'ReShade is not installed for this game (its anti-cheat bans ReShade).' : "NexusForge doesn't know the game's executable." }
+    if (managed && enabled && !enabled.has(managed.id)) {
+      return { ...base, version: managed.version, state: 'off', canInstall: false, canUpdate: false, detail: `Turned off${reshadeOff(mods, enabled, reshadeState(state)) ? ' with ReShade' : ''}; ${installed.join(', ') || 'the packs'} stay in NexusForge's storage.` }
+    }
     // Effects a preset needs that neither the packs nor the game folder have.
     const have = new Set([...(await effectsIn(managed)), ...(await effectFilesIn(t.dir, [SHADERS_PATH]))])
     const missing = effectsWanted(mods).filter((fx) => !have.has(fx.toLowerCase()))
@@ -683,6 +717,11 @@ export function applyIniDefaults(doc: IniDoc, compat?: CompatEntry, copyrightYea
     if (!covered) changed = doc.set('GENERAL', key, [...(cur ?? []).filter((p) => p.replace(/[\\/]+$/, '').toLowerCase() !== want.replace(/\\\*\*$/, '').toLowerCase()), want]) || changed
   }
   if (!doc.has('GENERAL', 'PresetPath')) changed = doc.set('GENERAL', 'PresetPath', '.\\ReShadePreset.ini') || changed
+  // Until its tutorial is done, ReShade keeps a "press Home to start the tutorial" banner on screen. NexusForge has
+  // set everything up already, so the game starts with the preset running and nothing to click through. A tutorial
+  // the user is half way through (1-3) stays.
+  const tutorial = doc.get('OVERLAY', 'TutorialProgress')?.trim()
+  if (!tutorial || tutorial === '0') changed = doc.set('OVERLAY', 'TutorialProgress', '4') || changed
   return changed
 }
 
@@ -705,8 +744,8 @@ export function presetAbs(dir: string, p: string): string {
   return /^[a-z]:[\\/]/i.test(p) ? p : join(dir, ...p.replace(/^\.[\\/]/, '').split(/[\\/]/).filter(Boolean))
 }
 
-/** Preset files the deployment put next to ReShade, newest mod first. */
-async function deployedPresets(dir: string, info: IntegrationInfo, manifest: DeployManifest, mods: InstalledMod[]): Promise<string[]> {
+/** Preset files the deployment put next to ReShade, newest mod first (`at`: when that mod was installed). */
+async function deployedPresets(dir: string, info: IntegrationInfo, manifest: DeployManifest, mods: InstalledMod[]): Promise<Array<{ rel: string; at: number }>> {
   const ids = new Set(info.targets.filter((x) => x.dir.toLowerCase() === dir.toLowerCase()).map((x) => x.id))
   const order = new Map(mods.map((m) => [m.id, m.installedAt]))
   const out: Array<{ rel: string; at: number }> = []
@@ -721,7 +760,7 @@ async function deployedPresets(dir: string, info: IntegrationInfo, manifest: Dep
     }
     out.push({ rel: `.\\${e.rel.replace(/\//g, '\\')}`, at: order.get(e.modId) ?? 0 })
   }
-  return out.sort((a, b) => b.at - a.at).map((x) => x.rel)
+  return out.sort((a, b) => b.at - a.at)
 }
 
 export interface ConfigureResult {
@@ -747,6 +786,8 @@ export async function configureReshade(game: Game, info: IntegrationInfo, manife
   const managed = mods.find((m) => m.loaderId === RESHADE_ID)
   const managedLive = Boolean(managed && manifest.entries.some((e) => e.modId === managed.id))
   if (!copies.length) {
+    // Turned off, not removed: ReShade.ini (overlay key, preset, depth settings) stays for when it is on again.
+    if (reshadeOff(mods, host.enabled ? await host.enabled(game.id) : undefined, rs)) return result
     if (rs.createdIni && (await fileExists(file))) {
       const keep = join(env.workDir, 'reshade', 'removed', game.id.replace(/[^\w.-]+/g, '_'), new Date().toISOString().replace(/[:.]/g, '-'))
       await fsp.mkdir(keep, { recursive: true })
@@ -789,20 +830,28 @@ export async function configureReshade(game: Game, info: IntegrationInfo, manife
     const o = (await readIni(outer)) ?? new IniDoc()
     if (o.set('INSTALL', 'BasePath', t.dir)) await fsp.writeFile(outer, o.serialize()).catch((err) => env.log.warn(`could not write ${outer}: ${(err as Error).message}`))
   }
-  // The active preset.
+  // The active preset: the newest preset mod's, until the user picks one; a preset mod installed after the user's
+  // pick becomes active again (installing a preset means wanting to see it).
   const current = doc.get('GENERAL', 'PresetPath')
   const currentExists = current ? await fileExists(presetAbs(t.dir, current)) : false
-  if (!rs.presetPicked) {
-    const lower = current?.toLowerCase()
-    const isDefault = !lower || lower === '.\\reshadepreset.ini'
-    const isOurs = Boolean(rs.autoPreset && lower === rs.autoPreset.toLowerCase())
-    const pick = (await deployedPresets(t.dir, info, manifest, mods))[0]
-    if (current && currentExists && !isDefault && !isOurs) {
-      // A preset picked in ReShade's overlay (or before NexusForge): never changed again.
-      rs.presetPicked = true
-    } else if (pick && pick.toLowerCase() !== lower) {
+  const lower = current?.toLowerCase()
+  const isDefault = !lower || lower === '.\\reshadepreset.ini'
+  const isOurs = Boolean(rs.autoPreset && lower === rs.autoPreset.toLowerCase())
+  const found = await deployedPresets(t.dir, info, manifest, mods)
+  if (!rs.presetPicked && current && currentExists && !isDefault && !isOurs) {
+    // A preset picked in ReShade's overlay (or before NexusForge).
+    rs.presetPicked = true
+    rs.presetPickedAt = Date.now()
+  }
+  // Picks recorded before 1.9 have no time: those stay as they are.
+  const pickedAt = rs.presetPickedAt ?? (rs.presetPicked ? Number.MAX_SAFE_INTEGER : 0)
+  const fresh = Boolean(found[0] && found[0].at > pickedAt)
+  if (!rs.presetPicked || fresh) {
+    const pick = found[0]?.rel
+    if (pick && pick.toLowerCase() !== lower) {
       changed = doc.set('GENERAL', 'PresetPath', pick) || changed
       rs.autoPreset = pick
+      rs.presetPicked = false
       result.preset = pick
     } else if (pick) {
       rs.autoPreset = pick
@@ -864,6 +913,12 @@ function reshadeInUse(manifest: DeployManifest, mods: InstalledMod[]): { live: I
 export async function verifyReshade(game: Game, _info: IntegrationInfo, manifest: DeployManifest, mods: InstalledMod[], env: IntegrationEnv): Promise<VerifyCheck[]> {
   const { live, needAddon } = reshadeInUse(manifest, mods)
   if (!live.length) return []
+  // Turned off: NexusForge's ReShade is installed but was left out of this deployment on purpose.
+  const managed = mods.find((m) => m.loaderId === RESHADE_ID)
+  if (managed && !manifest.entries.some((e) => e.modId === managed.id)) {
+    const users = live.filter((m) => needs(m, RESHADE_ID)).map((m) => m.name)
+    return users.length ? [{ label: 'ReShade is turned off', ok: false, level: 'info', detail: `${users.join(', ')} ${users.length === 1 ? 'takes' : 'take'} effect when ReShade is on again (ReShade tab).` }] : []
+  }
   const t = await renderTarget(game, env)
   if (!t) return [{ label: 'ReShade has a game executable to load into', ok: false, level: 'warning', detail: "Set the game's executable in its Settings tab." }]
   const checks: VerifyCheck[] = []
@@ -901,6 +956,22 @@ export async function diagnoseReshade(ctx: ReshadeDiagnoseInput): Promise<Diagno
   const asiOnly = ASI_ONLY[t.exeName.toLowerCase()]
   const live = asiOnly ? copies.filter((c) => ASI_RESHADE.test(c.name)) : copies
   const inert = copies.filter((c) => !live.includes(c))
+  if (reshadeOff(ctx.mods, ctx.enabled, reshadeState(ctx.state))) {
+    // The user turned ReShade off: nothing to repair. An old copy the game never loads is only mentioned.
+    if (inert.length) {
+      out.push({
+        code: 'NF-RSH-008',
+        category: 'loader',
+        severity: 'info',
+        confidence: 'confirmed',
+        title: 'An unused copy of ReShade is in the game folder',
+        detail: `ReShade is turned off. ${inert.map((c) => c.name).join(', ')} is an old copy of ReShade that ${t.exeName} never loads${asiOnly ? ` (${asiOnly.why})` : ''}, so it does nothing.`,
+        evidence: inert.map((c) => join(t.dir, c.name)),
+        fixes: [{ id: 'reshade-setup', label: 'Move it out', description: `Moves ${inert.map((c) => c.name).join(', ')} into NexusForge's backup folder (it comes back if you remove ReShade in NexusForge).`, consequential: true, params: { cleanup: '1' } }]
+      })
+    }
+    return out
+  }
   if (inert.length && asiOnly) {
     out.push({
       code: 'NF-RSH-008',
@@ -1012,8 +1083,8 @@ export function withReshade(i: GameIntegration): GameIntegration {
   const w: GameIntegration = {
     ...i,
     loaders: [...i.loaders, reshadeLoader, effectsLoader],
-    async inspect(game, env, state, mods) {
-      const info = await i.inspect(game, env, state, mods)
+    async inspect(game, env, state, mods, enabled) {
+      const info = await i.inspect(game, env, state, mods, enabled)
       const t = await renderTarget(game, env).catch(() => undefined)
       // The extra target only exists when a mod uses it, so plans of other games stay as they were.
       if (t && reshadeTargetId(info, t.dir) === RESHADE_TARGET && mods.some((m) => (m.routes ?? []).some((r) => r.target === RESHADE_TARGET))) {
@@ -1021,7 +1092,7 @@ export function withReshade(i: GameIntegration): GameIntegration {
       }
       for (const l of [reshadeLoader, effectsLoader]) {
         try {
-          info.loaders.push(await l.status(game, info, env, state, mods))
+          info.loaders.push(await l.status(game, info, env, state, mods, enabled))
         } catch (err) {
           env.log.warn(`${game.name}: ${l.name} status failed: ${(err as Error).message}`)
         }

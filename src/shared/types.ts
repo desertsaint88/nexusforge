@@ -452,7 +452,8 @@ export type DistributionKind = 'steam' | 'gog' | 'epic' | 'xbox' | 'standalone' 
 export interface LoaderStatus {
   id: string
   name: string
-  state: 'installed' | 'missing' | 'outdated' | 'broken' | 'unsupported'
+  /** off: installed, but turned off by the user (not in the game right now); never a reason to repair or reinstall. */
+  state: 'installed' | 'missing' | 'outdated' | 'broken' | 'unsupported' | 'off'
   version?: string
   latest?: string
   dir?: string
@@ -499,7 +500,10 @@ export interface ReshadeView {
   compat?: { listed: boolean; banned: boolean; renderApi?: string }
   status: LoaderStatus
   effects?: LoaderStatus
-  copies: Array<{ name: string; version?: string; build: 'standard' | 'addon'; managed: boolean }>
+  /** loaded: false for a copy under a name the game never loads (dxgi.dll next to GTA5.exe): it does nothing. */
+  copies: Array<{ name: string; version?: string; build: 'standard' | 'addon'; managed: boolean; loaded: boolean }>
+  /** The on/off switch: off takes ReShade out of the game and keeps everything else (settings, presets, shaders). */
+  power: { on: boolean; canToggle: boolean }
   latest?: { version: string; released?: string }
   build: { chosen?: 'standard' | 'addon'; effective: 'standard' | 'addon'; neededBy: string[] }
   ini?: {

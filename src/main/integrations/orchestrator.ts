@@ -73,7 +73,8 @@ function installOrder(info: IntegrationInfo, wanted: string[], mods: Array<{ loa
   const out: string[] = []
   const add = (id: string, depth: number) => {
     const l = info.loaders.find((x) => x.id === id)
-    if (!l || depth > 6) return
+    // Turned off by the user (ReShade): set up never puts it back on its own.
+    if (!l || depth > 6 || l.state === 'off') return
     for (const r of l.requires ?? []) add(r, depth + 1)
     // Installed, unless an enabled mod needs more than what is there (ReShade's add-on build, more shader packs).
     if (l.refresh && (l.canUpdate || l.canInstall)) {

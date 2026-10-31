@@ -164,7 +164,14 @@ export function GamePage({ gameId, tab }: { gameId: string; tab?: GameTab }) {
               value: 'reshade',
               label: 'ReShade',
               icon: <Sparkles />,
-              badge: reshade?.state === 'installed' ? <span className="size-1.5 rounded-full bg-emerald-400" /> : reshade?.required && reshade.state !== 'unsupported' ? <Badge tone="warning">needed</Badge> : undefined
+              badge:
+                reshade?.state === 'installed' ? (
+                  <span className="size-1.5 rounded-full bg-emerald-400" />
+                ) : reshade?.state === 'off' ? (
+                  <span className="text-[11px] text-ink-400">off</span>
+                ) : reshade?.required && reshade.state !== 'unsupported' ? (
+                  <Badge tone="warning">needed</Badge>
+                ) : undefined
             },
             {
               value: 'diagnose',

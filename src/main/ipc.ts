@@ -194,6 +194,11 @@ export function registerIpc(rendererUrl: string): void {
   handle('mods:installFiles', async (_e, gameId, files) => {
     const out = []
     for (const f of files ?? []) out.push(await mods.installMod(str(gameId, 'game'), str(f, 'file')))
+    // Dropped files work like downloads: what they need (ReShade, shader packs, a mod loader) is set up and they
+    // are deployed, so they work without another click (Settings › Mods › Set up and deploy automatically).
+    if (out.length && getSettings().autoDeploy && out.every((m) => !(m.checks ?? []).some((c) => c.level === 'error'))) {
+      void setup.setupAndDeploy(gameId, { quiet: true }).catch(() => {})
+    }
     return out
   })
   handle('mods:remove', async (_e, gameId, modId) => {
@@ -250,6 +255,7 @@ export function registerIpc(rendererUrl: string): void {
   handle('reshade:setup', (_e, gameId, req) => rescanAfter(str(gameId, 'game'), reshade.reshadeSetup(gameId, reshadeRequest(req))))
   handle('reshade:settings', (_e, gameId, patch) => reshade.reshadeSettings(str(gameId, 'game'), reshadePatch(patch)))
   handle('reshade:remove', (_e, gameId) => rescanAfter(str(gameId, 'game'), reshade.reshadeRemove(gameId)))
+  handle('reshade:power', (_e, gameId, on) => rescanAfter(str(gameId, 'game'), reshade.reshadePower(gameId, Boolean(on))))
 
   handle('diagnostics:run', (_e, gameId) => diagnostics.runDiagnostics(str(gameId, 'game')))
   handle('diagnostics:fix', (_e, gameId, fixId, params) => {

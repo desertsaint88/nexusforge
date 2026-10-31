@@ -129,6 +129,8 @@ export interface IpcInvokeMap {
   'reshade:settings': (gameId: string, patch: ReshadeSettingsPatch) => ReshadeView
   /** Takes NexusForge's ReShade and shader packs out of the game. */
   'reshade:remove': (gameId: string) => void
+  /** Turns ReShade off (out of the game, everything kept) or on again, then deploys. */
+  'reshade:power': (gameId: string, on: boolean) => DeployReport | undefined
 
   /** Read-only checks of a game's mod setup, with evidence and the repairs NexusForge can make. */
   'diagnostics:run': (gameId: string) => DiagnosticReport
@@ -243,7 +245,7 @@ export const INVOKE_CHANNELS = [
   'profiles:list', 'profiles:create', 'profiles:rename', 'profiles:delete', 'profiles:setActive', 'profiles:save',
   'deploy:run', 'deploy:setup', 'deploy:cancel', 'deploy:purge', 'deploy:status', 'deploy:probe', 'conflicts:get',
   'integration:inspect', 'integration:installLoader', 'integration:removeLoader', 'integration:operation', 'integration:lastLaunch', 'integration:shortcut', 'integration:shortcuts',
-  'reshade:view', 'reshade:setup', 'reshade:settings', 'reshade:remove',
+  'reshade:view', 'reshade:setup', 'reshade:settings', 'reshade:remove', 'reshade:power',
   'diagnostics:run', 'diagnostics:fix', 'diagnostics:export',
   'bugreport:state', 'bugreport:capture', 'bugreport:preview', 'bugreport:submit', 'bugreport:rendererError', 'bugreport:openFolder', 'bugreport:dismissCrash', 'bugreport:githubSignIn',
   'updater:state', 'updater:check', 'updater:install',

@@ -9,13 +9,16 @@ import { inspectGame, forgetInspection, listMods } from '../mods/manager'
 import { activeProfile } from '../mods/profiles'
 import { runningGames } from '../library/library'
 import { integrationEnv, integrationState, saveIntegrationState } from '../integrations/env'
-import { installLoader, removeLoader } from '../integrations/orchestrator'
+import { installLoader, removeLoader, setupAndDeploy } from '../integrations/orchestrator'
+import { setEnabledInActive } from '../mods/profiles'
 import { emit } from '../events'
 import { scoped } from '../logger'
 import { fileExists } from '../integrations/common'
 import {
   addonMods,
   API_LABEL,
+  ASI_ONLY,
+  ASI_RESHADE,
   chooseModule,
   EFFECTS_ID,
   effectiveApi,
@@ -76,6 +79,7 @@ export async function reshadeView(gameId: string): Promise<ReshadeView> {
     status,
     effects,
     copies: [],
+    power: { on: status.state !== 'off', canToggle: status.state === 'off' },
     build: { chosen: rs.build, effective: rs.build ?? (addonMods(mods).length ? 'addon' : 'standard'), neededBy: addonMods(mods).map((m) => m.name) },
     presets: [],
     packages: [],
@@ -113,7 +117,10 @@ export async function reshadeView(gameId: string): Promise<ReshadeView> {
       }))
     )
   }
-  view.copies = (await findReshade(t.dir)).map((c) => ({ ...c, managed: ours.includes(c.name.toLowerCase()) }))
+  const asiOnly = ASI_ONLY[t.exeName.toLowerCase()]
+  view.copies = (await findReshade(t.dir)).map((c) => ({ ...c, managed: ours.includes(c.name.toLowerCase()), loaded: !asiOnly || ASI_RESHADE.test(c.name) }))
+  // On/off works for NexusForge's copy and for a copy installed by hand that the game really loads.
+  view.power.canToggle = status.state === 'off' || Boolean(managed) || view.copies.some((c) => c.loaded)
   // Taking over a copy installed by hand keeps its build unless the user picks another one.
   if (!rs.build && !view.build.neededBy.length && view.copies.some((c) => !c.managed && c.build === 'addon')) view.build.effective = 'addon'
   const fxMod = mods.find((m) => m.loaderId === EFFECTS_ID)
@@ -261,9 +268,9 @@ export async function reshadeSettings(gameId: string, patch: ReshadeSettingsPatc
   if (patch.keyOverlay !== undefined && !/^\d{1,3},[01],[01],[01]$/.test(patch.keyOverlay)) throw new Error('Invalid key.')
   await writeReshadeSettings(t.dir, patch)
   if (patch.presetPath !== undefined) {
-    // A preset picked here is never changed automatically again.
+    // A preset picked here stays active until another preset mod is installed.
     const state = integrationState(gameId)
-    saveIntegrationState(gameId, { ...state, reshade: { ...(state.reshade ?? {}), presetPicked: true } })
+    saveIntegrationState(gameId, { ...state, reshade: { ...(state.reshade ?? {}), presetPicked: true, presetPickedAt: Date.now() } })
   }
   log.info(`${game.name}: ReShade.ini ${JSON.stringify(patch)}`)
   return reshadeView(gameId)
@@ -279,13 +286,86 @@ export async function reshadeRemove(gameId: string): Promise<void> {
   const { game } = await inspectGame(gameId, true)
   const t = await renderTarget(game, integrationEnv())
   const left: Array<{ name: string; backup: string }> = []
-  for (const r of state.reshade?.replaced ?? []) {
+  for (const r of [...(state.reshade?.replaced ?? []), ...(state.reshade?.parked ?? [])]) {
     const to = t ? join(t.dir, r.name) : undefined
     if (to && (await fileExists(r.backup)) && !(await fileExists(to))) {
       await fsp.rename(r.backup, to).catch(() => left.push(r))
       log.info(`${game.name}: put ${r.name} back from ${r.backup}`)
     } else if (await fileExists(r.backup)) left.push(r)
   }
-  saveIntegrationState(gameId, { ...state, reshade: { ...(state.reshade ?? {}), presetPicked: false, autoPreset: undefined, replaced: left.length ? left : undefined } })
+  saveIntegrationState(gameId, { ...state, reshade: { ...(state.reshade ?? {}), presetPicked: false, presetPickedAt: undefined, autoPreset: undefined, replaced: left.length ? left : undefined, parked: undefined } })
   forgetInspection(gameId)
+}
+
+/** Moves backed-up copies into the game folder again (only where nothing is now). Returns the ones left over. */
+async function putBack(gameId: string, dir: string, list: Array<{ name: string; backup: string }>): Promise<Array<{ name: string; backup: string }>> {
+  const left: Array<{ name: string; backup: string }> = []
+  for (const r of list) {
+    const to = join(dir, r.name)
+    if (!(await fileExists(r.backup))) continue
+    if (await fileExists(to)) {
+      left.push(r)
+      continue
+    }
+    await fsp.rename(r.backup, to).then(
+      () => log.info(`${gameId}: put ${r.name} back from ${r.backup}`),
+      () => left.push(r)
+    )
+  }
+  return left
+}
+
+/**
+ * ReShade's on/off switch. Off takes ReShade out of the game and keeps everything else: NexusForge's copy and its
+ * shader packs are switched off in the active profile, a copy installed by hand that the game loads is moved into
+ * NexusForge's folder; ReShade.ini, presets and screenshots stay. On reverses it. Both deploy right away.
+ */
+export async function reshadePower(gameId: string, on: boolean): Promise<DeployReport | undefined> {
+  const { game } = await inspectGame(gameId, true)
+  if (runningGames().includes(gameId)) throw new Error(`Close ${game.name} first.`)
+  const env = integrationEnv()
+  const t = await renderTarget(game, env)
+  if (!t) throw new Error("NexusForge doesn't know the game's executable.")
+  const mods = listMods(gameId)
+  const managed = mods.find((m) => m.loaderId === RESHADE_ID)
+  const ids = mods.filter((m) => m.loaderId === RESHADE_ID || m.loaderId === EFFECTS_ID).map((m) => m.id)
+  const state = integrationState(gameId)
+  const rs = { ...(state.reshade ?? {}) }
+  const ours = new Set((managed?.routes ?? []).map((r) => basename(r.to).toLowerCase()))
+  const asiOnly = ASI_ONLY[t.exeName.toLowerCase()]
+  if (!on) {
+    if (ids.length) await setEnabledInActive(gameId, ids, false)
+    // A copy installed by hand that the game loads would keep ReShade running.
+    const foreign = (await findReshade(t.dir)).filter((c) => !ours.has(c.name.toLowerCase()) && (!asiOnly || ASI_RESHADE.test(c.name)))
+    if (foreign.length) {
+      const keep = join(env.workDir, 'reshade', 'off', gameId.replace(/[^\w.-]+/g, '_'), new Date().toISOString().replace(/[:.]/g, '-'))
+      await fsp.mkdir(keep, { recursive: true })
+      for (const c of foreign) {
+        const from = join(t.dir, c.name)
+        const to = join(keep, c.name)
+        await fsp.rename(from, to).catch(async () => {
+          await fsp.copyFile(from, to)
+          await fsp.rm(from)
+        })
+        rs.parked = [...(rs.parked ?? []), { name: c.name, backup: to }]
+        log.info(`${game.name}: ReShade off, moved ${from} (installed by hand) to ${to}`)
+      }
+    }
+  } else {
+    if (ids.length) await setEnabledInActive(gameId, ids, true)
+    const parked = rs.parked ?? []
+    rs.parked = undefined
+    // With NexusForge's own copy on, a parked copy would load ReShade twice: it stays backed up instead (it comes
+    // back when NexusForge's ReShade is removed).
+    if (managed) rs.replaced = [...(rs.replaced ?? []), ...parked]
+    else {
+      const left = await putBack(gameId, t.dir, parked)
+      if (left.length) rs.replaced = [...(rs.replaced ?? []), ...left]
+    }
+  }
+  saveIntegrationState(gameId, { ...integrationState(gameId), reshade: rs })
+  forgetInspection(gameId)
+  emit('mods:changed', { gameId })
+  log.info(`${game.name}: ReShade turned ${on ? 'on' : 'off'}`)
+  return setupAndDeploy(gameId, { quiet: true })
 }

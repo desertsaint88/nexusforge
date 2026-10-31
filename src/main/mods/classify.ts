@@ -371,6 +371,16 @@ export const reshadeContentStrategy: InstallStrategy = {
           cls.skipped.push({ path: f.rel, reason: 'moved next to ReShade, where it looks for add-ons', moved: true })
           moved.add(f.rel)
           cls.routes.push(route(f.rel, rsTarget, name))
+          // Its settings file (ShaderToggler.ini next to ShaderToggler.addon64) goes along, or it starts unconfigured.
+          const stem = name.replace(/\.addon(32|64)?$/i, '').toLowerCase()
+          for (const sib of files) {
+            const sn = basename(sib.rel)
+            if (sib.rel === f.rel || moved.has(sib.rel) || dirname(sib.rel) !== dirname(f.rel)) continue
+            if (!sn.toLowerCase().startsWith(`${stem}.`) || !/\.(ini|json|toml|cfg|ya?ml)$/i.test(sn)) continue
+            cls.skipped.push({ path: sib.rel, reason: `settings of ${name}: moved next to it`, moved: true })
+            moved.add(sib.rel)
+            cls.routes.push(route(sib.rel, rsTarget, sn))
+          }
         }
       }
     }
@@ -428,6 +438,25 @@ export const reshadeContentStrategy: InstallStrategy = {
         }
       }
     }
+    // Textures a preset or an effect names (a LUT next to the preset): into reshade-shaders\Textures, where ReShade
+    // looks for them. Preview pictures nothing names stay where they are.
+    if (uses) {
+      const texts: string[] = []
+      for (const f of files) {
+        if (!/\.(fx|fxh|ini)$/i.test(f.rel) || /^reshade\.ini$/i.test(basename(f.rel))) continue
+        const text = await textOf(join(pkg.dir, f.rel))
+        if (text) texts.push(text.toLowerCase())
+      }
+      const named = texts.join('\n')
+      for (const f of files) {
+        if (!/\.(png|jpe?g|dds|bmp|tga)$/i.test(f.rel) || moved.has(f.rel) || /(^|\/)(reshade-shaders|textures)\//i.test(f.rel)) continue
+        if (cls.skipped.some((s) => s.moved && (f.rel === s.path || f.rel.startsWith(`${s.path}/`)))) continue
+        if (!named.includes(basename(f.rel).toLowerCase())) continue
+        cls.skipped.push({ path: f.rel, reason: 'a texture an effect or preset uses: moved to reshade-shaders\\Textures, where ReShade looks for it', moved: true })
+        moved.add(f.rel)
+        cls.routes.push(route(f.rel, rsTarget, `reshade-shaders/Textures/${basename(f.rel)}`))
+      }
+    }
     if (!uses) return
     addNeed(cls, RESHADE_ID)
     if (wanted.size) {
@@ -447,7 +476,13 @@ export const reshadeContentStrategy: InstallStrategy = {
       cls.checks.push({
         level: 'info',
         code: 'needs_reshade',
-        message: `${parts.join('. ') || 'This mod is for ReShade'}. ${status?.state === 'installed' || status?.state === 'outdated' ? `ReShade is installed for this game${status.proxy ? ` (${status.proxy})` : ''}` : 'NexusForge installs ReShade from reshade.me with the next setup'}${presets ? ', and makes the preset the active one' : ''}.`
+        message: `${parts.join('. ') || 'This mod is for ReShade'}. ${
+          status?.state === 'installed' || status?.state === 'outdated'
+            ? `ReShade is installed for this game${status.proxy ? ` (${status.proxy})` : ''}`
+            : status?.state === 'off'
+              ? 'ReShade was turned off for this game; NexusForge turns it on again for this mod'
+              : 'NexusForge installs ReShade from reshade.me with the next setup'
+        }${presets ? ', and makes the preset the active one' : ''}.`
       })
     }
   }
@@ -562,7 +597,8 @@ export const STRATEGIES: InstallStrategy[] = [reshadePackageStrategy, installerS
 
 /** Raised when shared classification rules change: every mod is laid out again (manual layouts excepted). */
 // 2: ReShade content (bundled ReShade copies left out, presets/shaders next to ReShade), folder-per-game archives.
-export const SHARED_RULES_REVISION = 2
+// 3: textures a preset or effect names go to reshade-shaders\Textures; an add-on's settings file goes along with it.
+export const SHARED_RULES_REVISION = 3
 
 /** Classifies a package: shared strategies first, then the game's own rules, then shared amendments. */
 export async function classifyPackage(pkg: StagedPackage, ctx: ClassifyContext): Promise<Classification> {

@@ -16,6 +16,7 @@ import {
   Info,
   LoaderCircle,
   Monitor,
+  Power,
   RefreshCw,
   SkipForward,
   SquareMenu,
@@ -44,6 +45,8 @@ function loaderBadge(l: LoaderStatus): ReactNode {
       return <Badge tone="warning">v{l.version} · {l.latest} available</Badge>
     case 'broken':
       return <Badge tone="danger">needs repair</Badge>
+    case 'off':
+      return <Badge tone="neutral">turned off</Badge>
     case 'unsupported':
       return <Badge tone="neutral">not possible here</Badge>
     default:
@@ -54,15 +57,18 @@ function loaderBadge(l: LoaderStatus): ReactNode {
 /** The header shows loaders that are in the game or needed; with many (Cyberpunk has six) the rest are counted. */
 function headerLoaders(loaders: LoaderStatus[]): { shown: LoaderStatus[]; more: number } {
   if (loaders.length <= 2) return { shown: loaders, more: 0 }
-  const shown = loaders.filter((l) => l.required || l.state === 'installed' || l.state === 'outdated' || l.state === 'broken')
+  const shown = loaders.filter((l) => l.required || l.state === 'installed' || l.state === 'outdated' || l.state === 'broken' || l.state === 'off')
   return { shown, more: loaders.filter((l) => !shown.includes(l) && l.state !== 'unsupported').length }
 }
 
 function LoaderRow({ game, loader, all }: { game: Game; loader: LoaderStatus; all: LoaderStatus[] }) {
   const needs = (loader.requires ?? []).map((id) => all.find((l) => l.id === id)?.name ?? id)
   const busy = useMods((s) => Boolean(s.loaderBusy[`${game.id}:${loader.id}`]))
-  const { installLoader, removeLoader } = useMods()
-  const action = loader.canUpdate ? 'Update' : loader.canInstall ? (loader.state === 'broken' ? 'Repair' : 'Install') : undefined
+  const { installLoader, removeLoader, inspect } = useMods()
+  const [switching, setSwitching] = useState(false)
+  const action = loader.state === 'off' ? undefined : loader.canUpdate ? 'Update' : loader.canInstall ? (loader.state === 'broken' ? 'Repair' : 'Install') : undefined
+  // ReShade's off switch (the ReShade tab has the same one).
+  const canTurnOn = loader.state === 'off' && loader.id === 'reshade'
   return (
     <div className="rounded-xl border border-white/[0.05] bg-black/20 px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -75,6 +81,25 @@ function LoaderRow({ game, loader, all }: { game: Game; loader: LoaderStatus; al
         {action && (
           <Button size="sm" variant={loader.required ? 'primary' : 'secondary'} loading={busy} icon={<Download className="size-3.5" />} onClick={() => void installLoader(game.id, loader.id)}>
             {action}
+          </Button>
+        )}
+        {canTurnOn && (
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={switching}
+            icon={<Power className="size-3.5" />}
+            onClick={async () => {
+              setSwitching(true)
+              try {
+                await invoke('reshade:power', game.id, true)
+              } finally {
+                setSwitching(false)
+                void inspect(game.id, true)
+              }
+            }}
+          >
+            Turn on
           </Button>
         )}
         {loader.canRemove && (
@@ -183,7 +208,7 @@ export function SetupPanel({ game }: { game: Game }) {
   const shortcuts = useMods((s) => s.shortcuts[game.id]) ?? NO_SHORTCUTS
   const { inspect, createShortcut } = useMods()
   const [refreshing, setRefreshing] = useState(false)
-  const needsAttention = Boolean(info && (!info.valid || info.loaders.some((l) => l.required && l.state !== 'installed' && l.state !== 'outdated') || (op?.done && !op.ok)))
+  const needsAttention = Boolean(info && (!info.valid || info.loaders.some((l) => l.required && l.state !== 'installed' && l.state !== 'outdated' && l.state !== 'off') || (op?.done && !op.ok)))
   const [open, setOpen] = useState<boolean | undefined>()
   const expanded = open ?? needsAttention
 

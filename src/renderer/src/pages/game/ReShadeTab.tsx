@@ -74,12 +74,16 @@ function KeyPicker({ label, disabled, onPick }: { label: string; disabled?: bool
 
 function statusBadge(v: ReshadeView): ReactNode {
   const s = v.status
+  if (s.state === 'off') return <Badge tone="neutral">turned off</Badge>
   if (s.state === 'unsupported') return <Badge tone="neutral">not possible here</Badge>
   if (s.state === 'broken') return <Badge tone="danger">needs attention</Badge>
   if (s.state === 'outdated') return <Badge tone="warning">{s.refresh ? 'needs another build' : `v${s.version} · ${s.latest} available`}</Badge>
   if (s.state === 'installed') return <Badge tone="success">{s.version ? `v${s.version}` : 'installed'}{s.via === 'manual' ? ' · by hand' : ''}</Badge>
   return <Badge tone={s.required ? 'warning' : 'neutral'}>{s.required ? 'needed, not installed' : 'not installed'}</Badge>
 }
+
+/** The copy the game loads (not an old one under a name it never loads). */
+const loadedCopy = (v: ReshadeView) => v.copies.find((c) => c.loaded)
 
 export function ReShadeTab({ game }: { game: Game }) {
   const [view, setView] = useState<ReshadeView>()
@@ -118,8 +122,12 @@ export function ReShadeTab({ game }: { game: Game }) {
   if (!view) return <div className="skeleton h-40 rounded-2xl" />
 
   const s = view.status
+  const off = s.state === 'off'
   const managed = view.copies.some((c) => c.managed) || (s.via !== 'manual' && s.canRemove)
-  const present = view.copies.length > 0
+  // In the game and loaded by it (a dxgi.dll next to GTA5.exe is ReShade too, but the game never loads it).
+  const present = view.copies.some((c) => c.loaded)
+  const handCopy = view.copies.some((c) => !c.managed)
+  const strays = view.copies.filter((c) => !c.managed && (!c.loaded || managed))
   const installable = s.state !== 'unsupported' && Boolean(view.exe)
   const effectiveApi = api === undefined ? (view.api.chosen ?? view.api.detected) : (api ?? view.api.detected)
   const effectiveBuild = build === undefined ? view.build.effective : (build ?? (view.build.neededBy.length ? 'addon' : 'standard'))
@@ -166,6 +174,8 @@ export function ReShadeTab({ game }: { game: Game }) {
       setView(await invoke('reshade:settings', game.id, patch))
     })
 
+  const power = (on: boolean) => run(on ? 'Turn ReShade on' : 'Turn ReShade off', () => invoke('reshade:power', game.id, on))
+
   const visiblePacks = showAllPacks ? view.packages : view.packages.filter((p) => p.required || p.defaultOn || p.installed || p.selected || p.neededFor.length || selectedPacks.includes(p.name))
   const activePreset = view.presets.find((p) => p.active)
 
@@ -174,25 +184,31 @@ export function ReShadeTab({ game }: { game: Game }) {
       {/* Status */}
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 px-5 py-4">
-          <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-2xl', present ? 'accent-gradient text-white' : 'bg-white/[0.06] text-ink-300')}>
+          <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-2xl', present && !off ? 'accent-gradient text-white' : 'bg-white/[0.06] text-ink-300')}>
             {opRunning ? <LoaderCircle className="size-5 animate-spin" /> : <Sparkles className="size-5" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[15px] font-semibold text-ink-100">ReShade</span>
               {statusBadge(view)}
-              {present && view.copies[0] && <Badge>{view.copies[0].build === 'addon' ? 'with add-on support' : 'standard build'}</Badge>}
-              {present && view.copies[0] && <Badge className="font-mono">{view.copies[0].name}</Badge>}
-              {view.latest && !present && <span className="text-[11.5px] text-ink-400">newest: {view.latest.version}{view.latest.released ? ` (${view.latest.released})` : ''}</span>}
+              {present && !off && loadedCopy(view) && <Badge>{loadedCopy(view)!.build === 'addon' ? 'with add-on support' : 'standard build'}</Badge>}
+              {present && !off && loadedCopy(view) && <Badge className="font-mono">{loadedCopy(view)!.name}</Badge>}
+              {view.latest && !present && !off && <span className="text-[11.5px] text-ink-400">newest: {view.latest.version}{view.latest.released ? ` (${view.latest.released})` : ''}</span>}
             </div>
             <p className={cn('mt-1 text-[12.5px] leading-relaxed', blocked ? 'text-amber-200/90' : 'text-ink-300')}>{blocked ?? s.detail ?? s.summary}</p>
-            {view.usedBy.length > 0 && <p className="mt-1 text-[12px] text-ink-400">Needed by {view.usedBy.join(', ')}.</p>}
+            {view.usedBy.length > 0 && <p className="mt-1 text-[12px] text-ink-400">{off ? 'Used by' : 'Needed by'} {view.usedBy.join(', ')}{off ? ' (they take effect when ReShade is on).' : '.'}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
+            {view.power.canToggle && (
+              <label className="mr-1 flex items-center gap-2 rounded-xl border border-white/[0.06] bg-black/20 py-1 pr-3 pl-1.5 text-[12.5px] text-ink-200" title={off ? 'Puts ReShade back into the game' : 'Takes ReShade out of the game; settings, presets and shaders are kept'}>
+                <Toggle checked={!off} disabled={Boolean(running) || Boolean(busy) || view.running} onChange={(v) => void power(v)} label={off ? 'Turn ReShade on' : 'Turn ReShade off'} />
+                {busy === 'Turn ReShade on' || busy === 'Turn ReShade off' ? <LoaderCircle className="size-3.5 animate-spin" /> : off ? 'Off' : 'On'}
+              </label>
+            )}
             <IconButton label="Check again" onClick={() => void run('Check again', load)}>
               <RefreshCw className={cn('size-4', busy === 'Check again' && 'animate-spin')} />
             </IconButton>
-            {installable && !present && !managed && (
+            {installable && !present && !managed && !handCopy && !off && (
               <Button variant="primary" loading={busy === 'Install ReShade'} disabled={Boolean(running) || !effectiveApi || effectiveApi === 'vulkan'} icon={<Download className="size-4" />} onClick={() => void install()}>
                 Install ReShade
               </Button>
@@ -202,19 +218,19 @@ export function ReShadeTab({ game }: { game: Game }) {
                 {s.state === 'missing' ? 'Deploy' : s.refresh ? 'Switch build' : `Update to ${s.latest}`}
               </Button>
             )}
-            {present && !managed && installable && (s.state !== 'broken' || s.canInstall) && (
+            {handCopy && !managed && !off && installable && (s.state !== 'broken' || s.canInstall) && (
               <Button variant={s.state === 'broken' ? 'primary' : 'outline'} loading={busy === 'Install ReShade'} disabled={Boolean(running)} icon={<Wrench className="size-4" />} onClick={() => void install({ takeOver: true })}>
                 {s.state === 'broken' ? 'Fix it' : 'Let NexusForge manage it'}
               </Button>
             )}
-            {present && managed && view.copies.some((c) => !c.managed) && (
+            {managed && strays.length > 0 && (
               <Button
-                variant="outline"
+                variant="ghost"
                 disabled={Boolean(running) || Boolean(busy)}
                 onClick={() => void run('Move unused copy', () => invoke('reshade:setup', game.id, { cleanup: true }))}
-                title="Moves the copy NexusForge doesn't manage into its backup folder"
+                title="Moves the old copy into NexusForge's backup folder (it comes back if you remove ReShade in NexusForge)"
               >
-                Move {view.copies.find((c) => !c.managed)?.name} out
+                Move {strays.map((c) => c.name).join(', ')} out
               </Button>
             )}
             {managed && (
@@ -347,7 +363,7 @@ export function ReShadeTab({ game }: { game: Game }) {
               })}
             </div>
           </Row>
-          {!present && !managed && (
+          {!present && !managed && !handCopy && !off && (
             <div className="mt-2 flex justify-end">
               <Button variant="primary" loading={busy === 'Install ReShade'} disabled={Boolean(running) || !effectiveApi || effectiveApi === 'vulkan'} icon={<Download className="size-4" />} onClick={() => void install()}>
                 Install ReShade{selectedPacks.length ? ` with ${selectedPacks.length} shader pack${selectedPacks.length === 1 ? '' : 's'}` : ''}
@@ -358,7 +374,7 @@ export function ReShadeTab({ game }: { game: Game }) {
       )}
 
       {/* ReShade.ini */}
-      {present && view.ini && (
+      {(present || managed || off) && view.ini && (
         <Section
           icon={<Palette />}
           title="Settings"
@@ -374,6 +390,7 @@ export function ReShadeTab({ game }: { game: Game }) {
           }
         >
           {view.running && <div className="mb-3 rounded-xl border border-amber-400/20 bg-amber-500/[0.06] px-3 py-2 text-[12.5px] text-amber-100/90">{game.name} is running: close it to change these settings.</div>}
+          {off && !view.running && <div className="mb-3 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2 text-[12.5px] text-ink-300">ReShade is turned off. These settings are kept and apply as soon as it is on again.</div>}
           <Row label="Overlay key" hint="Opens ReShade in game.">
             <KeyPicker label={view.ini.keyLabel} disabled={view.running || Boolean(busy)} onPick={(k) => void settings('Overlay key', { keyOverlay: k })} />
           </Row>
@@ -439,7 +456,7 @@ export function ReShadeTab({ game }: { game: Game }) {
       )}
 
       {/* Last start */}
-      {present && (
+      {present && !off && (
         <Section
           icon={<Layers />}
           title="Last start"

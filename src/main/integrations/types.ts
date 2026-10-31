@@ -98,8 +98,12 @@ export interface ReshadeState {
   /** The preset NexusForge made active; a preset picked in NexusForge or in ReShade's overlay is never changed again. */
   autoPreset?: string
   presetPicked?: boolean
+  /** When the user picked a preset; a preset mod installed after that becomes the active one again. */
+  presetPickedAt?: number
   /** Copies of ReShade NexusForge moved aside when it took over (restored when its ReShade is removed). */
   replaced?: Array<{ name: string; backup: string }>
+  /** Copies installed by hand that ReShade's off switch moved out of the game (put back when it is turned on). */
+  parked?: Array<{ name: string; backup: string }>
 }
 
 /** What NexusForge remembers about a game's integration between runs. */
@@ -162,6 +166,8 @@ export interface LoaderInstallHost {
   saveState(gameId: string, state: IntegrationState): void
   /** The game's installed mods (loaders that pick a build or packages from what the mods need). */
   mods?(gameId: string): InstalledMod[] | Promise<InstalledMod[]>
+  /** Mods switched on in the active profile (ReShade's off switch). */
+  enabled?(gameId: string): Promise<ReadonlySet<string>>
 }
 
 export type StepReporter = (detail: string, progress?: number) => void
@@ -169,7 +175,8 @@ export type StepReporter = (detail: string, progress?: number) => void
 export interface LoaderAdapter {
   id: string
   name: string
-  status(game: Game, info: IntegrationInfo, env: IntegrationEnv, state: IntegrationState, mods: InstalledMod[]): Promise<LoaderStatus>
+  /** enabled: the mods switched on in the active profile (when the caller knows them). */
+  status(game: Game, info: IntegrationInfo, env: IntegrationEnv, state: IntegrationState, mods: InstalledMod[], enabled?: ReadonlySet<string>): Promise<LoaderStatus>
   /** Installs (or updates) through the official channel. Resolves when the loader is ready. */
   install(game: Game, info: IntegrationInfo, env: IntegrationEnv, host: LoaderInstallHost, report: StepReporter, signal?: AbortSignal): Promise<void>
   /** Removes a loader NexusForge installed (folders it created; Steam apps through Steam). */
@@ -190,7 +197,7 @@ export interface GameIntegration {
   /** Raised when classification rules change; mods laid out by an older revision are laid out again. */
   revision: number
   matches(game: Game, env: IntegrationEnv): Promise<boolean>
-  inspect(game: Game, env: IntegrationEnv, state: IntegrationState, mods: InstalledMod[]): Promise<IntegrationInfo>
+  inspect(game: Game, env: IntegrationEnv, state: IntegrationState, mods: InstalledMod[], enabled?: ReadonlySet<string>): Promise<IntegrationInfo>
   classify(pkg: StagedPackage, game: Game, info: IntegrationInfo, env: IntegrationEnv): Promise<Classification>
   loaders: LoaderAdapter[]
   /** After the files are in place (and after a rollback): loader lists and config. Idempotent. */

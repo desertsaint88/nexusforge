@@ -20,7 +20,7 @@ import type {
 } from '@shared/types'
 import { db } from '../store'
 import { paths } from '../paths'
-import { emit } from '../events'
+import { emit, toast } from '../events'
 import { scoped } from '../logger'
 import { exists, isDir, renameDir, safeName, safeReaddir, shortId, walkFiles } from '../util/fs'
 import { getGame, runningGames } from '../library/library'
@@ -31,7 +31,8 @@ import { buildPlan, conflictReport, type DeployPlan, type PlanFile, type PlanMod
 import { planFilesFor, routesOf } from './routes'
 import { applyDeployment, EMPTY_PLAN, hasInterruptedDeployment, readManifest } from './deploy'
 import { probeLinks } from './links'
-import { activeProfile, addModToProfiles, deleteAllProfiles, listProfiles, saveProfile } from './profiles'
+import { activeProfile, addModToProfiles, deleteAllProfiles, listProfiles, saveProfile, setEnabledInActive } from './profiles'
+import { EFFECTS_ID, RESHADE_ID } from '../reshade/core'
 import { integrationFor } from '../integrations/registry'
 import { integrationEnv, integrationState, saveIntegrationState } from '../integrations/env'
 import { capabilitiesOf, engineTargets, type GameIntegration, type LoaderInstallHost, type StagedPackage } from '../integrations/types'
@@ -89,7 +90,8 @@ export const loaderHost: LoaderInstallHost = {
   installModFile: (gameId, file, meta) => installMod(gameId, file, meta),
   state: integrationState,
   saveState: saveIntegrationState,
-  mods: (gameId) => listMods(gameId)
+  mods: (gameId) => listMods(gameId),
+  enabled: async (gameId) => new Set((await activeProfile(gameId)).enabled)
 }
 
 /** Save files a mod already has in the game's save folder (laying it out again keeps their slots). */
@@ -109,7 +111,10 @@ export function inspectGame(gameId: string, fresh = false): Promise<GameContext>
     const game = requireGame(gameId)
     const env = integrationEnv()
     const integration = await integrationFor(game, env)
-    const info = await integration.inspect(game, env, integrationState(gameId), listMods(gameId))
+    const mods = listMods(gameId)
+    // Games without mods have no profile yet; inspecting one doesn't create it.
+    const enabled = new Set(mods.length ? (await activeProfile(gameId)).enabled : [])
+    const info = await integration.inspect(game, env, integrationState(gameId), mods, enabled)
     info.supports = capabilitiesOf(integration)
     return { game, integration, info }
   })()
@@ -288,6 +293,7 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
       retireStaging(gameId, previous.stagingDir)
     } else {
       await addModToProfiles(gameId, mod.id)
+      await reshadeBackOn(gameId, mod)
     }
     if (cls.skipped.length) log.info(`${mod.name}: left out ${cls.skipped.map((s) => `${s.path} (${s.reason})`).join('; ')}`)
     for (const c of cls.checks) log.info(`${mod.name}: ${c.level}: ${c.message}`)
@@ -298,6 +304,22 @@ export async function installMod(gameId: string, input: string, meta: InstallMet
     await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {})
     log.error(`install failed for ${input}`, err)
     throw err
+  }
+}
+
+/**
+ * A newly installed preset, shader or add-on for a game whose ReShade the user turned off: ReShade (and its shader
+ * packs) is switched on again in the active profile, otherwise the new mod would do nothing.
+ */
+async function reshadeBackOn(gameId: string, mod: InstalledMod): Promise<void> {
+  if (!loadersNeeded(mod).includes(RESHADE_ID)) return
+  const ids = listMods(gameId)
+    .filter((m) => m.loaderId === RESHADE_ID || m.loaderId === EFFECTS_ID)
+    .map((m) => m.id)
+  const changed = ids.length ? await setEnabledInActive(gameId, ids, true) : []
+  if (changed.length) {
+    log.info(`${mod.name} needs ReShade, which was turned off: turned it on again`)
+    toast('info', 'ReShade is on again', `${mod.name} needs it.`)
   }
 }
 
@@ -468,10 +490,13 @@ interface PlanResult {
   excluded: Map<string, { state: ModDeployState; reason: string }>
 }
 
-/** A loader is usable when it is in the game, or when its mod is enabled and deploys with the others. */
+/**
+ * A loader is usable when it is in the game, or when its mod is enabled and deploys with the others. A loader the
+ * user turned off (ReShade) counts too: its mods' files go in and simply do nothing until it is on again.
+ */
 function loaderReady(ctx: GameContext, loaderId: string, enabledMods: InstalledMod[]): boolean {
   const l = ctx.info.loaders.find((x) => x.id === loaderId)
-  if (l && (l.state === 'installed' || l.state === 'outdated')) return true
+  if (l && (l.state === 'installed' || l.state === 'outdated' || l.state === 'off')) return true
   return enabledMods.some((m) => m.loaderId === loaderId && !(m.checks ?? []).some((c) => c.level === 'error'))
 }
 

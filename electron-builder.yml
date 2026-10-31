@@ -27,7 +27,12 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: NexusForge
-  # The ember-N mark (npm run brand): icons, the welcome/finish side image and the page header.
+  # The hexagon mark in the Grey Hat look (npm run brand): icons, the welcome/finish side image and the page header.
+  # installer.nsh paints every page to match (near-black, light grey, dark buttons and title bar) through
+  # electron-builder's page macros. No custom `script`: with one, electron-builder stops building the uninstaller.
+  include: resources/installer.nsh
+  # English only, like the app (otherwise the buttons follow Windows' language and the texts above stay English).
+  multiLanguageInstaller: false
   installerIcon: resources/icon.ico
   uninstallerIcon: resources/icon.ico
   installerHeaderIcon: resources/icon.ico

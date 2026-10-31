@@ -15,33 +15,38 @@ import { useApp } from '../store/app'
 import { GameIcon } from './GameArt'
 import { ProgressBar } from './ui'
 
-/** The app icon (resources/icon.svg, scripts/brand-mark.mjs): an "N" in one stroke ending in an ember spark. */
+/** Pointy-top hexagon around the centre of the 64×64 box. */
+function hexPath(r: number): string {
+  const pts = [0, 1, 2, 3, 4, 5].map((k) => {
+    const a = ((-90 + 60 * k) * Math.PI) / 180
+    return `${(32 + r * Math.cos(a)).toFixed(2)} ${(32 + r * Math.sin(a)).toFixed(2)}`
+  })
+  return `M${pts.join('L')}Z`
+}
+
+/**
+ * The app icon (resources/icon.svg, scripts/brand-mark.mjs, same geometry): a hexagon around an "N" drawn as a
+ * small network of four nodes, light grey on a near-black tile (the Grey Hat look).
+ */
 export function Logo({ size = 28 }: { size?: number }) {
   const small = size <= 24
-  const n = small ? { d: 'M20 47V17L44 47V30.5', w: 7.6 } : { d: 'M21 46V18L43 46V30', w: 6 }
-  const e = small ? { cx: 44, cy: 18.5, r: 6.2 } : { cx: 43, cy: 19, r: 5.2 }
-  const t = small ? { x: 0, r: 12 } : { x: 2, r: 14 }
+  const g = small
+    ? { hexR: 26.5, hexW: 4.6, n: [[23, 42], [23, 22], [41, 42], [41, 22]], nW: 5.4, node: 0, tile: { x: 0, r: 12 } }
+    : { hexR: 21.5, hexW: 2.4, n: [[24.6, 40.2], [24.6, 23.8], [39.4, 40.2], [39.4, 23.8]], nW: 2.4, node: 3.2, tile: { x: 2, r: 14 } }
+  const t = g.tile
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden>
       <defs>
         <linearGradient id="nf-logo-t" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#2b2c32" />
-          <stop offset="1" stopColor="#0c0c0f" />
+          <stop offset="0" stopColor="#181818" />
+          <stop offset="1" stopColor="#0b0b0b" />
         </linearGradient>
-        <linearGradient id="nf-logo-s" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#ffffff" />
-          <stop offset="1" stopColor="#b4b7bf" />
-        </linearGradient>
-        <radialGradient id="nf-logo-e" cx="0.42" cy="0.38" r="0.62">
-          <stop offset="0" stopColor="#ffe6b0" />
-          <stop offset="0.45" stopColor="#ffa14a" />
-          <stop offset="1" stopColor="#ec5a24" />
-        </radialGradient>
       </defs>
       <rect x={t.x} y={t.x} width={64 - 2 * t.x} height={64 - 2 * t.x} rx={t.r} fill="url(#nf-logo-t)" />
-      <rect x={t.x + 0.5} y={t.x + 0.5} width={63 - 2 * t.x} height={63 - 2 * t.x} rx={t.r - 0.5} fill="none" stroke="#ffffff" strokeOpacity={small ? 0.12 : 0.09} />
-      <path d={n.d} fill="none" stroke="url(#nf-logo-s)" strokeWidth={n.w} strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={e.cx} cy={e.cy} r={e.r} fill="url(#nf-logo-e)" />
+      <rect x={t.x + 0.5} y={t.x + 0.5} width={63 - 2 * t.x} height={63 - 2 * t.x} rx={t.r - 0.5} fill="none" stroke="#ffffff" strokeOpacity={small ? 0.1 : 0.07} />
+      <path d={hexPath(g.hexR)} fill="none" stroke="#c8c8c8" strokeWidth={g.hexW} strokeLinejoin="round" />
+      <path d={`M${g.n.map((p) => p.join(' ')).join('L')}`} fill="none" stroke="#c8c8c8" strokeWidth={g.nW} strokeLinecap="round" strokeLinejoin="round" />
+      {g.node > 0 && g.n.map(([x, y]) => <circle key={`${x},${y}`} cx={x} cy={y} r={g.node} fill="#c8c8c8" />)}
     </svg>
   )
 }

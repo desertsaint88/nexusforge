@@ -1,4 +1,6 @@
-// Renders every NexusForge brand image from one mark (scripts/brand-mark.mjs) with Electron's offscreen renderer:
+// Renders every NexusForge brand image from one mark (scripts/brand-mark.mjs) with Electron's offscreen renderer,
+// in the Grey Hat look: greys only on near-black, Bahnschrift in spaced capitals ("NEXUSFORGE / EST. 2026", like the
+// DESERTSAINT lockup), a faint honeycomb where the hacker-group marks sit in the background it was made to match.
 //   resources/icon.svg, icon.png (512)          app icon source and PNG
 //   resources/icon.ico (16–256)                 app, installer and uninstaller icon; small sizes drawn for their size
 //   resources/installerSidebar.bmp (164×314)    welcome / finish pages of the installer and uninstaller
@@ -9,14 +11,12 @@
 import { app, BrowserWindow } from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { markSvg } from './brand-mark.mjs'
+import { BG, hexPath, INK, markSvg } from './brand-mark.mjs'
 
 const root = join(import.meta.dirname, '..')
 const res = join(root, 'resources')
 const brand = join(res, 'brand')
 mkdirSync(brand, { recursive: true })
-const font = pathToFileURL(join(root, 'node_modules', '@fontsource-variable', 'inter', 'files', 'inter-latin-wght-normal.woff2')).href
 const version = JSON.parse((await import('node:fs')).readFileSync(join(root, 'package.json'), 'utf8')).version
 
 const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
@@ -32,49 +32,80 @@ const place = (name, w, h, html) => {
 for (const s of ICO_SIZES) place(`ico-${s}`, s, s, markSvg({ size: s, id: `i${s}`, small: s <= 24 }))
 place('png-512', 512, 512, markSvg({ size: 512, id: 'p512' }))
 
-const text = (t, size, weight, color, extra = '') => `<div style="font:${weight} ${size}px/1.15 Inter;color:${color};letter-spacing:${size > 40 ? '-0.03em' : '0'};${extra}">${t}</div>`
-const glow = (x, y, r, a) => `<div style="position:absolute;left:${x - r}px;top:${y - r}px;width:${2 * r}px;height:${2 * r}px;border-radius:50%;background:radial-gradient(closest-side,rgba(255,138,61,${a}),transparent)"></div>`
-const dark = 'background:radial-gradient(900px 500px at 20% 0%,#17181c,transparent 70%),#09090b'
+// Bahnschrift (Windows' DIN-style face, the one the Grey Hat marks and the DESERTSAINT lockup use) in spaced capitals.
+const text = (t, size, weight, color, spacing = 0.2, extra = '') =>
+  `<div style="font-family:Bahnschrift,'Segoe UI',sans-serif;font-size:${size}px;font-weight:${weight};line-height:1.15;color:${color};letter-spacing:${spacing}em;margin-right:-${spacing}em;${extra}">${t}</div>`
+
+/** A faint honeycomb: the hexagon of the mark repeated, the way the group marks sit in the background. */
+function honeycomb(w, h, r, color, id, fade) {
+  const dx = r * Math.sqrt(3)
+  const cells = []
+  for (let row = -1; row * r * 1.5 < h + r * 2; row++) {
+    for (let col = -1; col * dx < w + dx; col++) {
+      const x = col * dx + (row % 2 ? dx / 2 : 0)
+      const y = row * r * 1.5
+      cells.push(`<path transform="translate(${(x - 32 * (r / 32)).toFixed(1)} ${(y - 32 * (r / 32)).toFixed(1)}) scale(${(r / 32).toFixed(4)})" d="${hexPath(32)}"/>`)
+    }
+  }
+  return `<svg width="${w}" height="${h}" style="position:absolute;inset:0" viewBox="0 0 ${w} ${h}">
+    <defs><radialGradient id="${id}-f" ${fade}><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <mask id="${id}-m"><rect width="${w}" height="${h}" fill="url(#${id}-f)"/></mask></defs>
+    <g mask="url(#${id}-m)" fill="none" stroke="${color}" stroke-width="${(32 / r).toFixed(3)}" vector-effect="non-scaling-stroke">${cells.join('')}</g>
+  </svg>`
+}
+
+const panel = (w, h, inner) => `<div style="position:absolute;inset:0;background:${BG};overflow:hidden">${inner}</div>`
 
 place(
   'sidebar',
   164,
   314,
-  `<div style="position:absolute;inset:0;${dark};overflow:hidden">
-    ${glow(82, 104, 90, 0.16)}
-    <div style="position:absolute;left:42px;top:64px">${markSvg({ size: 80, id: 'sb' })}</div>
-    <div style="position:absolute;left:0;right:0;top:162px;text-align:center">${text('NexusForge', 21, 700, '#f2f3f5')}</div>
-    <div style="position:absolute;left:14px;right:14px;top:192px;text-align:center">${text('Mod manager &amp; launcher', 11.5, 450, '#8d9098')}</div>
-    <div style="position:absolute;left:0;right:0;bottom:16px;text-align:center">${text(`Version ${version}`, 10.5, 500, '#5c5f67')}</div>
-  </div>`
+  panel(
+    164,
+    314,
+    `${honeycomb(164, 314, 22, '#1d1d1d', 'sbh', 'cx="0.5" cy="1" r="0.9"')}
+    <div style="position:absolute;left:44px;top:56px">${markSvg({ size: 76, id: 'sb', tile: false })}</div>
+    <div style="position:absolute;left:0;right:0;top:150px;text-align:center">${text('NEXUSFORGE', 15, 600, INK, 0.2)}</div>
+    <div style="position:absolute;left:0;right:0;top:173px;text-align:center">${text('EST. 2026', 9.5, 400, '#7a7a7a', 0.32)}</div>
+    <div style="position:absolute;left:30px;right:30px;top:198px;height:1px;background:#262626"></div>
+    <div style="position:absolute;left:0;right:0;top:210px;text-align:center">${text('MOD MANAGER', 8.5, 400, '#5e5e5e', 0.26)}${text('&amp; LAUNCHER', 8.5, 400, '#5e5e5e', 0.26, 'margin-top:3px')}</div>
+    <div style="position:absolute;left:0;right:0;bottom:14px;text-align:center">${text(`V${version}`, 8.5, 400, '#4a4a4a', 0.28)}</div>`
+  )
 )
+// The header strip of the other pages: the installer paints it in the same near-black (installer.nsh).
 place(
   'header',
   150,
   57,
-  `<div style="position:absolute;inset:0;background:#ffffff;display:flex;align-items:center;justify-content:flex-end;gap:9px;padding-right:12px">
-    ${text('NexusForge', 14, 700, '#18191d')}
-    ${markSvg({ size: 34, id: 'hd' })}
-  </div>`
+  panel(
+    150,
+    57,
+    `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-end;gap:9px;padding-right:12px">
+      ${text('NEXUSFORGE', 10.5, 600, INK, 0.18)}
+      ${markSvg({ size: 34, id: 'hd', tile: false })}
+    </div>`
+  )
 )
 
-const hero = (w, h, iconSize, titleSize, tagSize, id) => `<div style="position:absolute;inset:0;${dark};overflow:hidden">
-    <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:48px 48px;mask-image:radial-gradient(ellipse at 30% 40%,#000 20%,transparent 75%)"></div>
-    ${glow(w * 0.5 - (titleSize * 4.2) / 2, h / 2, iconSize * 1.4, 0.13)}
-    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:${Math.round(iconSize * 0.28)}px">
-      ${markSvg({ size: iconSize, id })}
-      <div>
-        ${text('NexusForge', titleSize, 750, '#f4f5f7')}
-        ${text('Universal game mod manager &amp; launcher for Windows', tagSize, 450, '#9a9da5', `margin-top:${Math.round(tagSize * 0.55)}px`)}
-        ${text('Mod loaders &nbsp;·&nbsp; Verified deployment &nbsp;·&nbsp; Diagnostics &nbsp;·&nbsp; In-app updates', tagSize * 0.72, 500, '#62656d', `margin-top:${Math.round(tagSize * 0.9)}px;letter-spacing:.02em`)}
+const hero = (w, h, iconSize, titleSize, tagSize, id) =>
+  panel(
+    w,
+    h,
+    `${honeycomb(w, h, Math.round(h / 7), '#191919', `${id}h`, 'cx="0.28" cy="0.5" r="0.75"')}
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:${Math.round(iconSize * 0.3)}px">
+      ${markSvg({ size: iconSize, id, tile: false })}
+      <div style="border-left:1px solid #262626;padding-left:${Math.round(iconSize * 0.3)}px">
+        ${text('NEXUSFORGE', titleSize, 600, INK, 0.16)}
+        ${text('EST. 2026', tagSize * 0.8, 400, '#7a7a7a', 0.4, `margin-top:${Math.round(tagSize * 0.5)}px`)}
+        ${text('UNIVERSAL GAME MOD MANAGER &amp; LAUNCHER FOR WINDOWS', tagSize * 0.78, 400, '#9a9a9a', 0.14, `margin-top:${Math.round(tagSize * 1.2)}px`)}
+        ${text('MOD LOADERS &nbsp;·&nbsp; RESHADE &nbsp;·&nbsp; VERIFIED DEPLOYMENT &nbsp;·&nbsp; DIAGNOSTICS', tagSize * 0.62, 400, '#5e5e5e', 0.16, `margin-top:${Math.round(tagSize * 0.7)}px`)}
       </div>
-    </div>
-  </div>`
-place('banner', 1280, 360, hero(1280, 360, 150, 64, 22, 'bn'))
-place('social', 1280, 640, hero(1280, 640, 190, 80, 27, 'so'))
+    </div>`
+  )
+place('banner', 1280, 360, hero(1280, 360, 170, 58, 22, 'bn'))
+place('social', 1280, 640, hero(1280, 640, 230, 76, 28, 'so'))
 
 const page = `<!doctype html><html><head><meta charset="utf-8"><style>
-  @font-face { font-family: Inter; src: url('${font}') format('woff2'); font-weight: 100 900; }
   html,body { margin:0; background:transparent; -webkit-font-smoothing:antialiased; }
   .box { position:absolute; left:0; overflow:hidden; }
   .box > svg { display:block; }
@@ -131,6 +162,9 @@ function bmp(bgra, w, h) {
   }
   return out
 }
+
+// Grey anti-aliasing: ClearType's coloured fringes would put colour into a greys-only design.
+app.commandLine.appendSwitch('disable-lcd-text')
 
 app.whenReady().then(async () => {
   const tmp = join(app.getPath('temp'), 'nexusforge-brand.html')
